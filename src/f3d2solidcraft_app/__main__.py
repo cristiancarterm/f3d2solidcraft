@@ -15,7 +15,7 @@ def main(argv: list[str] | None = None) -> int:
         for stream in (sys.stdout, sys.stderr):
             reconfigure = getattr(stream, "reconfigure", None)
             if reconfigure is not None:
-                reconfigure(encoding="utf-8")
+                reconfigure(encoding="utf-8", errors=stream.errors)
         from f3d2solidcraft.cli import main as cli
 
         return cli(argv[1:])

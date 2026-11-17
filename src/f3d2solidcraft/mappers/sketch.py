@@ -267,7 +267,7 @@ def _dimension(ctx: Context, sketch_entities: list[SketchEntity], used: set[str]
     elif role.startswith("linear"):
         kinds, want, kind = ("line",), abs(p.value_mm), "length"
     else:
-        return [f"dimension {p.name} ({p.role}) skipped: role not handled in M0"]
+        return [f"dimension {p.name} ({p.role}) skipped: this kind of dimension is not supported yet"]
     matches = [
         e
         for e in sketch_entities
@@ -400,7 +400,7 @@ def build_sketch(sketch: Sketch, name: str | None, ctx: Context) -> list[str]:
         elif c.kind == "coincident_loci":
             warnings.append(_coincident_loci(sketch, c))
         elif c.kind != "coincident":  # coincident is implicit: sketch.line connects shared points
-            warnings.append(f"constraint {c.kind} not handled in M0")
+            warnings.append(f"constraint {c.kind} not supported yet")
     used: set[str] = set()
     for p in sketch.dimensions:
         warnings += _dimension(ctx, drawable, used, p)

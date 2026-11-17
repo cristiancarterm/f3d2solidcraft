@@ -1,6 +1,8 @@
 name: release
 # A tag `vX.Y.Z` publishes that version to PyPI and attaches the three desktop installers to its GitHub
-# release.
+# release. The release is created as a draft, each installer leg uploads to the draft, and only when all
+# three legs succeeded does the last job publish it: a leg that fails leaves a draft nobody sees, never a
+# public release with an installer missing.
 #
 # Run by hand (Actions -> release -> Run workflow), it is a rehearsal that publishes nothing: it builds
 # and checks the package and builds the three desktop installers, kept only as downloadable workflow
@@ -44,6 +46,7 @@ jobs:
           uv venv /tmp/smoke
           uv pip install --python /tmp/smoke/bin/python dist/*.whl
           /tmp/smoke/bin/f3d2solidcraft --help
+          /tmp/smoke/bin/f3d2solidcraft --version
           /tmp/smoke/bin/python -c "import f3d2solidcraft; print(f3d2solidcraft.__version__)"
       - uses: actions/upload-artifact@v4
         with:
@@ -68,7 +71,9 @@ jobs:
 
   pypi:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')  # a dispatch, even from a tag, never publishes
-    needs: build
+    # Last, after the GitHub release is out with all three installers: PyPI cannot be undone, so it
+    # waits until nothing else can still fail and leave PyPI ahead of the installers.
+    needs: [build, publish]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -98,10 +103,15 @@ jobs:
   # libxcb-cursor0 is needed to load the Qt xcb platform plugin".
   #
   # Run by hand, this job is the installers' rehearsal: it builds them and uploads them as workflow
-  # artifacts, and the release step below is skipped. A tag does both.
+  # artifacts, and the release steps are skipped. A tag does both.
   installers:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    needs: build
+    # `!cancelled()` so a hand run, where `draft` is skipped, still builds; the result checks keep a
+    # failed build or a draft that was not made from going on.
+    if: >-
+      !cancelled() && needs.build.result == 'success' &&
+      (needs.draft.result == 'success' || needs.draft.result == 'skipped') &&
+      (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    needs: [build, draft]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -119,8 +129,8 @@ jobs:
             platform: linux
             format: appimage
             flags: --no-docker -C 'template_branch="v0.4.4"'
-    # `write` is only used by the release step, which runs on tags alone. A job's permissions cannot depend
-    # on the event, so a hand run gets it too; it uploads artifacts and nothing else.
+    # `write` is only used by the upload to the draft, which runs on tags alone. A job's permissions cannot
+    # depend on the event, so a hand run gets it too; it uploads artifacts and nothing else.
     permissions:
       contents: write
     defaults:
@@ -146,7 +156,62 @@ jobs:
           name: installer-${{ matrix.platform }}
           path: dist/*
           if-no-files-found: error
-      - if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
+      - name: Upload to the draft release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  # The tag's release, as a draft, before any installer is built: the three legs upload into this one
+  # release instead of racing to create it. A draft left from an earlier attempt at the same tag is used
+  # as it is; a release already published is not turned back into a draft.
+  draft:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; the legs upload to it"
+            exit 0
+          fi
+          # The notes are the version's own section of CHANGELOG.md, from its heading to the next one.
+          awk -v v="## ${GITHUB_REF_NAME#v}" '
+            index($0, v) == 1 && (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for ${GITHUB_REF_NAME#v}"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md
+
+  # Publishes the draft once every installer leg succeeded. A failed or cancelled leg skips this job, so
+  # the release stays a draft with whatever was uploaded, for a re-run of the failed leg to complete.
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [draft, installers]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Every installer is attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          assets=$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$assets"
+          for suffix in .msi .dmg .AppImage; do
+            grep -q -- "$suffix\$" <<< "$assets" || { echo "no $suffix attached to $GITHUB_REF_NAME"; exit 1; }
+          done
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest

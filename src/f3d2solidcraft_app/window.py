@@ -38,6 +38,9 @@ from f3d2solidcraft_app.outcome import Outcome, outcome_from
 from f3d2solidcraft_app.runner import OWN_GROUP, kill_group, kill_tree, partial_paths, worker_command
 from f3d2solidcraft_app.texts import language, t
 
+if sys.platform == "win32":
+    from f3d2solidcraft_app.winjob import JOB_VARIABLE, ProcessTree
+
 FILE, CONVERT, RESULT, ENGINES = range(4)
 DESIGN_SUFFIXES = {".f3d", ".f3z"}
 DOWNLOAD_URL = "https://github.com/tangency-labs/solidcraft/releases"
@@ -68,6 +71,8 @@ class _Job:
     pid: int
     output: Path
     report: Path
+    # Windows: the Job object the worker and its engines live in; closing it ends them all.
+    tree: "ProcessTree | None" = None
 
     @property
     def partials(self) -> list[Path]:
@@ -90,6 +95,7 @@ class Wizard(QMainWindow):
         # Python in development; packaged, the app itself (`worker_command`).
         self.executable = sys.executable
         self.inspecting: QProcess | None = None
+        self.inspecting_tree: ProcessTree | None = None  # Windows: the inspection's job
         # The SolidCraft the check chose; None until a check has been answered.
         self.solidcraft: EngineStatus | None = None
         self.checking = False
@@ -141,8 +147,8 @@ class Wizard(QMainWindow):
         choose.clicked.connect(self._choose_file)
         self.holds_label = _plain(QLabel(""))
         self.save_label = _plain(QLabel(""))
-        change_output = QPushButton(t("change_output", self.lang))
-        change_output.clicked.connect(self._choose_output)
+        self.change_output = QPushButton(t("change_output", self.lang))
+        self.change_output.clicked.connect(self._choose_output)
         self.engines_label = _plain(QLabel(""))  # versions as the engines print them
         self.convert_button = QPushButton(t("convert", self.lang))
         self.convert_button.setEnabled(False)
@@ -152,10 +158,11 @@ class Wizard(QMainWindow):
             choose,
             self.holds_label,
             self.save_label,
-            change_output,
+            self.change_output,
             self.engines_label,
         ):
             box.addWidget(widget)
+        self._show_output_choice(False)  # nothing to save, nor to change, before a file is loaded
         row = QHBoxLayout()
         row.addStretch()
         row.addWidget(self.convert_button)
@@ -287,20 +294,60 @@ class Wizard(QMainWindow):
         self._update_convert_button()
         self.engines_checked.emit()
 
-    def _new_process(self) -> QProcess:
-        """A converter process pinned to the SolidCraft the check chose.
+    def _new_process(self) -> tuple[QProcess, "ProcessTree | None"]:
+        """A converter process pinned to the SolidCraft the check chose, and on Windows its job.
 
         The converter resolves SolidCraft on its own with `locate_solidcraft()`, the first copy on
         the PATH; the check picks the first one new enough. Passing the choice in
         `F3D2SC_SOLIDCRAFT_CLI` makes both the same engine.
+
+        On Windows the job is made here, before the worker starts, so its name can go in the
+        worker's environment (`winjob`); `_start` puts the worker in it. None where there are process
+        groups instead, or if Windows refused to make one (then `kill_tree` falls back to taskkill).
         """
         process = QProcess(self)
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert(OWN_GROUP, "1")  # so `kill_tree` reaches the engines too
         if self.solidcraft is not None and self.solidcraft.ok and self.solidcraft.path is not None:
             environment.insert("F3D2SC_SOLIDCRAFT_CLI", str(self.solidcraft.path))
+        tree = None
+        if sys.platform == "win32":
+            try:
+                tree = ProcessTree()
+            except OSError as exc:
+                print(f"f3d2solidcraft: no job object for the worker: {exc}", file=sys.stderr)
+            else:
+                environment.insert(JOB_VARIABLE, tree.name)
         process.setProcessEnvironment(environment)
-        return process
+        return process, tree
+
+    @staticmethod
+    def _start(process: QProcess, tree: "ProcessTree | None", command: list[str]) -> "ProcessTree | None":
+        """Start `process` and put it in `tree` at once; the tree, or None if there is none to keep.
+
+        A worker the window could not assign still joins the job itself (`winjob.join`), so the
+        tree is kept: closing it is still what ends whatever is inside.
+        """
+        process.start(command[0], command[1:])
+        if tree is None:
+            return None
+        pid = process.processId()
+        if not pid:  # it did not start: nothing can be inside
+            tree.close()
+            return None
+        try:
+            tree.add(pid)
+        except OSError as exc:
+            print(f"f3d2solidcraft: could not put the worker in its job object: {exc}", file=sys.stderr)
+        return tree
+
+    @staticmethod
+    def _end_tree(tree: "ProcessTree | None", pid: int) -> None:
+        """Kill a running worker with every process under it: its job on Windows, its group elsewhere."""
+        if tree is not None:
+            tree.close()
+        else:
+            kill_tree(pid)
 
     def _update_convert_button(self) -> None:
         self.convert_button.setEnabled(self.engines_ready and self.inspected and self.input is not None)
@@ -372,6 +419,11 @@ class Wizard(QMainWindow):
         self.save_label.setText(t("save_as", self.lang, name=path.name))
         return True
 
+    def _show_output_choice(self, shown: bool) -> None:
+        """The "Save as" line and its «Change…» button: only with a file loaded, which gives them a name."""
+        self.save_label.setVisible(shown)
+        self.change_output.setVisible(shown)
+
     def _forget_file(self) -> None:
         """No file loaded: nothing the card no longer shows can be converted."""
         self.input = self.output = None
@@ -379,6 +431,7 @@ class Wizard(QMainWindow):
         self.inspected = False
         self.drop_label.setText(t("drop_here", self.lang))
         self.save_label.setText("")
+        self._show_output_choice(False)
         self._update_convert_button()
 
     def load_file(self, path: Path) -> None:
@@ -393,6 +446,7 @@ class Wizard(QMainWindow):
         self.inspected = False
         self._update_convert_button()
         self.save_label.setText(t("save_as", self.lang, name=self.output.name))
+        self._show_output_choice(True)
         self.drop_label.setText(path.name)
         self.holds_label.setText("")
         # Before the check answers there is no engine to pin yet: `_engines_checked` inspects then.
@@ -400,12 +454,18 @@ class Wizard(QMainWindow):
             self._inspect()
 
     def _inspect(self) -> None:
-        inspect = self._new_process()
+        inspect, tree = self._new_process()
         self.inspecting = inspect
         command = worker_command(["inspect", str(self.input), "--json"], self.executable)
-        inspect.finished.connect(lambda code, _status: self._inspected(inspect, code))
+
+        def finished(code: int, _status: QProcess.ExitStatus) -> None:
+            if tree is not None:
+                tree.close()  # Windows: nothing the inspection started outlives it
+            self._inspected(inspect, code)
+
+        inspect.finished.connect(finished)
         inspect.errorOccurred.connect(lambda error: self._inspect_error(inspect, error))
-        inspect.start(command[0], command[1:])
+        self.inspecting_tree = self._start(inspect, tree, command)
 
     def _inspect_error(self, process: QProcess, error: QProcess.ProcessError) -> None:
         # Only a start failure: anything later also ends in `finished`, which answers it.
@@ -468,7 +528,7 @@ class Wizard(QMainWindow):
         self.progress_label.setText(t("starting", self.lang))
         self.bar.setRange(0, 0)
         self._show(CONVERT)
-        process = self._new_process()
+        process, tree = self._new_process()
         job = _Job(process, 0, self.output, self.report)
         self.job = job
         process.readyReadStandardOutput.connect(self._read_progress)
@@ -486,7 +546,7 @@ class Wizard(QMainWindow):
             "--progress",
         ]
         command = worker_command(args, self.executable)
-        process.start(command[0], command[1:])
+        job.tree = self._start(process, tree, command)
         job.pid = process.processId()  # the fork happens in start(); 0 if it failed
 
     def _read_progress(self) -> None:
@@ -511,7 +571,9 @@ class Wizard(QMainWindow):
     def _kill(self, job: _Job) -> None:
         """The worker and the engines under it: `QProcess.kill()` alone reaches only the worker."""
         pid = job.process.processId() or job.pid
-        if job.process.state() != QProcess.ProcessState.NotRunning:
+        if job.tree is not None:
+            job.tree.close()  # whatever state the worker is in: its engines may outlive it
+        elif job.process.state() != QProcess.ProcessState.NotRunning:
             kill_tree(pid)
         job.process.kill()
 
@@ -538,6 +600,10 @@ class Wizard(QMainWindow):
         crashed = status == QProcess.ExitStatus.CrashExit
         if self.cancelled or crashed:
             kill_group(job.pid)  # whatever the worker left behind keeps its group id
+        if job.tree is not None:
+            # Windows: whatever the worker left behind is still in its job, however it ended (a worker
+            # ended from outside exits with the code it was given, not as a crash).
+            job.tree.close()
         self.job = None
         job.process.deleteLater()
         self.output, self.report = job.output, job.report
@@ -567,13 +633,13 @@ class Wizard(QMainWindow):
             self.cancelled = True
             self._kill(job)
             job.process.waitForFinished(5_000)  # delivers `finished`, which removes the partials
-            kill_group(job.pid)
+            kill_group(job.pid)  # Windows: `_kill` has closed the job, which ended the whole tree
             for partial in job.partials:
                 _remove(partial)
         inspecting = self.inspecting
         if inspecting is not None and inspecting.state() != QProcess.ProcessState.NotRunning:
             self.inspecting = None
-            kill_tree(inspecting.processId())
+            self._end_tree(self.inspecting_tree, inspecting.processId())
             inspecting.kill()
             inspecting.waitForFinished(2_000)
         super().closeEvent(event)
@@ -635,6 +701,7 @@ class Wizard(QMainWindow):
         self.drop_label.setText(t("drop_here", self.lang))
         self.holds_label.setText("")
         self.save_label.setText("")
+        self._show_output_choice(False)
         self.convert_button.setEnabled(False)
         self._show(FILE)
 

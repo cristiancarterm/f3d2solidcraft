@@ -40,12 +40,22 @@ def partial_paths(output: Path, report: Path) -> list[Path]:
 
 
 def lead_own_group() -> None:
-    """Called first thing in `--worker`: become a session (and group) leader when the window asked."""
+    """Called first thing in `--worker`: become a session (and group) leader when the window asked.
+
+    On Windows the window holds the worker in a Job object instead (`winjob`): the worker joins it
+    unless the window has put it there already, so no engine it starts is born outside the job.
+    """
     if os.environ.pop(OWN_GROUP, None) and hasattr(os, "setsid"):
         try:
             os.setsid()
         except OSError:
             pass  # already a group leader: its group is its own anyway
+    if os.name == "nt":
+        from f3d2solidcraft_app.winjob import JOB_VARIABLE, join
+
+        job = os.environ.pop(JOB_VARIABLE, None)
+        if job:
+            join(job)
 
 
 def kill_tree(pid: int) -> None:
@@ -57,7 +67,9 @@ def kill_tree(pid: int) -> None:
     if pid <= 0:
         return
     if os.name == "nt":
-        # Untested here (no Windows machine): /T takes the children, /F does not ask.
+        # Only when the window could not hold the worker in a Job object (`winjob`), which is what
+        # kills the tree on Windows. /T takes the children still linked to `pid`, /F does not ask; an
+        # engine whose worker already died is out of its reach. No test reaches this path.
         subprocess.run(
             ["taskkill", "/T", "/F", "/PID", str(pid)],
             capture_output=True,
@@ -80,8 +92,8 @@ def kill_tree(pid: int) -> None:
 def kill_group(pgid: int) -> None:
     """Sweep what is left of a worker's group after the worker itself is gone (Unix only).
 
-    The engines keep the group id when the worker dies, so this still reaches them. On Windows an
-    orphan is no longer under the worker's pid and is not reached (a Job object would be needed).
+    The engines keep the group id when the worker dies, so this still reaches them. On Windows the
+    worker's Job object does this instead (`winjob.ProcessTree.close`).
     """
     if pgid <= 0 or os.name == "nt":
         return

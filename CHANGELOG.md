@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1
+
+- Desktop app: the "Save as" line and its "Change…" button only appear once a file is loaded.
+- Desktop app on Windows: cancelling, closing the window or a converter that crashes now ends every process the
+  conversion started, SolidCraft included. Before, an engine could be left running after a crash.
+- File and folder names with accents, ñ or other non-ASCII letters convert from the command line and the desktop
+  app on Windows, macOS and Linux. The command now writes its output as UTF-8 on every system.
+- `f3d2solidcraft --version` prints the version.
+- The report says "not supported yet" for sketch constraints and dimensions it cannot rebuild, instead of an
+  internal milestone name.
+- Release: the installers are attached to a draft release, published only once all three are built; the cadmpeg
+  download for the installers times out instead of hanging, and refuses a Linux machine that is not x86_64.
+
 ## 0.3.0 — first public release
 
 - A desktop program for Windows, macOS and Linux (`f3d2solidcraft[gui]`, or the installers attached to each

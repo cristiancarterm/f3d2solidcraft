@@ -11,6 +11,26 @@ from f3d2solidcraft.mappers import MAPPERS, Unsupported
 REFERENCE_NAME = "f3d2solidcraft reference"
 
 
+def test_version_prints_the_package_version_and_exits_0(capsys):
+    from f3d2solidcraft import __version__
+
+    with pytest.raises(SystemExit) as stop:
+        main(["--version"])
+    assert stop.value.code == 0
+    assert capsys.readouterr().out == f"f3d2solidcraft {__version__}\n"
+
+
+def test_the_installed_command_answers_version():
+    # The console script the package installs, as a user runs it, not `main()` in this process.
+    import subprocess
+
+    from f3d2solidcraft import __version__
+
+    done = subprocess.run([_command(), "--version"], capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == f"f3d2solidcraft {__version__}"
+
+
 def test_convert_writes_design_and_report(sample_f3d, tools, tmp_path):
     out = tmp_path / "box.solidcraft"
     rep = tmp_path / "box.report.json"
@@ -38,6 +58,71 @@ def test_convert_writes_design_and_report(sample_f3d, tools, tmp_path):
         "clock_ceiling": 400.0,
         "clock_exceeded": False,
     }
+
+
+#: A design named with accents, an ñ, an en dash and a letter outside Windows' ANSI code page (cp1252),
+#: in a folder named the same way: what a user's own files look like, on every system.
+ACCENTED_DESIGN = "caja ñandú – pieza Ω.f3d"
+ACCENTED_FOLDER = "salida ñandú – Ω"
+
+
+def _command() -> str:
+    import shutil
+    import sys
+
+    script = shutil.which("f3d2solidcraft", path=str(Path(sys.executable).parent))
+    assert script is not None, f"no f3d2solidcraft command beside {sys.executable}"
+    return script
+
+
+def test_a_design_named_with_accents_converts_through_the_command(sample_f3d, tools, tmp_path):
+    """The installed command in a process of its own, its output read through a pipe as a script would.
+
+    The command writes UTF-8 on every system: on Windows a pipe would otherwise get the ANSI code page,
+    in which `Ω` does not exist.
+    """
+    import subprocess
+
+    f3d = tmp_path / ACCENTED_DESIGN
+    f3d.write_bytes(sample_f3d.read_bytes())
+    folder = tmp_path / ACCENTED_FOLDER
+    folder.mkdir()
+    out, rep = folder / "caja ñandú – pieza.solidcraft", folder / "caja ñandú – pieza.report.json"
+    done = subprocess.run(
+        [_command(), "convert", str(f3d), "-o", str(out), "--report", str(rep)],
+        capture_output=True,
+        check=False,
+    )
+    stdout, stderr = done.stdout.decode("utf-8"), done.stderr.decode("utf-8", "replace")
+    assert done.returncode == 0, stderr
+    assert out.is_file() and out.stat().st_size > 0
+    report = json.loads(rep.read_text(encoding="utf-8"))
+    assert report["verification"]["ok"] is True, report["verification"]
+    assert Path(report["source"]).name == ACCENTED_DESIGN
+    assert stdout.splitlines()[0].endswith(ACCENTED_DESIGN), stdout
+    assert "verified: yes" in stdout
+    assert not list(folder.glob("*.partial"))
+    inspected = subprocess.run([_command(), "inspect", str(f3d)], capture_output=True, check=False)
+    assert inspected.returncode == 0, inspected.stderr.decode("utf-8", "replace")
+    assert inspected.stdout.decode("utf-8").startswith(f"{f3d}: 32 parameters, 8 sketches")
+
+
+def test_the_command_writes_utf_8_even_where_the_system_would_not(sample_f3d, tools, tmp_path):
+    # Windows hands a pipe its ANSI code page; `PYTHONIOENCODING=cp1252` makes that so on any system,
+    # and cp1252 has no `Ω`: before the command chose UTF-8 itself, printing the name stopped it.
+    import os
+    import subprocess
+
+    f3d = tmp_path / ACCENTED_DESIGN
+    f3d.write_bytes(sample_f3d.read_bytes())
+    done = subprocess.run(
+        [_command(), "inspect", str(f3d)],
+        capture_output=True,
+        check=False,
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+    )
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    assert done.stdout.decode("utf-8").startswith(f"{f3d}: 32 parameters"), done.stdout
 
 
 def test_convert_takes_paths_spelt_in_8_3_short_names(sample_f3d, tools, tmp_path, short_name):

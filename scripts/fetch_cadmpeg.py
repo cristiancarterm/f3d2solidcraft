@@ -5,6 +5,9 @@
 Downloads the release asset for this system, checks it against the sha256 pinned here (the same
 numbers the plan's Global Constraints carry), and installs the binary. On macOS it fetches both
 architectures and joins them with `lipo`, so the .dmg runs on Apple silicon and Intel alike.
+
+cadmpeg publishes Linux binaries for x86_64 only: on any other Linux machine this stops with a
+message instead of putting an x86_64 binary in an app that could never run it.
 """
 
 import hashlib
@@ -14,6 +17,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -27,14 +31,58 @@ SHA256 = {
     "cadmpeg-x86_64-unknown-linux-gnu.tar.xz": "cdc95d3e6f07944f8a9a80c99259bd957d5afeecd4337d1a80ed6659e37a3abd",
 }
 DEFAULT_DEST = Path(__file__).resolve().parents[1] / "src/f3d2solidcraft_app/resources/bin"
+#: Seconds a connection may stay silent (connecting, or between two reads) before the download stops.
+TIMEOUT = 60
+#: How `platform.machine()` spells x86_64 on the systems that build the app.
+X86_64 = {"x86_64", "amd64"}
+
+
+class FetchError(SystemExit):
+    """A download or a machine this script cannot serve: the message is what the user reads."""
+
+
+def assets_for(system: str, machine: str) -> list[str]:
+    """The release assets to fetch for `platform.system()` and `platform.machine()`.
+
+    Windows takes the x86_64 build on any machine (Windows on Arm runs it emulated); macOS takes both
+    and joins them. Linux has no emulation to fall back on, so anything but x86_64 is refused.
+    """
+    if system == "Windows":
+        return ["cadmpeg-x86_64-pc-windows-msvc.zip"]
+    if system == "Darwin":
+        return ["cadmpeg-aarch64-apple-darwin.tar.xz", "cadmpeg-x86_64-apple-darwin.tar.xz"]
+    if system == "Linux" and machine.lower() in X86_64:
+        return ["cadmpeg-x86_64-unknown-linux-gnu.tar.xz"]
+    if system == "Linux":
+        raise FetchError(
+            f"cadmpeg {VERSION} publishes a Linux binary for x86_64 only, and this machine is "
+            f"{machine or 'of an unknown architecture'}: build the Linux app on an x86_64 machine"
+        )
+    raise FetchError(f"cadmpeg {VERSION} publishes no binary for {system or 'this system'}")
+
+
+def download(url: str, target: Path, timeout: float = TIMEOUT) -> None:
+    """`url` into `target`; a server that does not answer within `timeout` seconds stops it."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response, target.open("wb") as sink:
+            shutil.copyfileobj(response, sink)
+    except TimeoutError:
+        raise FetchError(f"downloading {url} timed out: no answer for {timeout:g} s") from None
+    except urllib.error.URLError as exc:
+        # A timeout while connecting arrives wrapped in a URLError.
+        if isinstance(exc.reason, TimeoutError):
+            raise FetchError(f"downloading {url} timed out: no answer for {timeout:g} s") from None
+        raise FetchError(f"could not download {url}: {exc.reason}") from None
+    except OSError as exc:
+        raise FetchError(f"could not download {url}: {exc}") from None
 
 
 def _fetch(asset: str, into: Path) -> Path:
     target = into / asset
-    urllib.request.urlretrieve(f"{BASE}/{asset}", target)
+    download(f"{BASE}/{asset}", target)
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     if digest != SHA256[asset]:
-        raise SystemExit(f"{asset}: sha256 {digest} is not the pinned {SHA256[asset]}")
+        raise FetchError(f"{asset}: sha256 {digest} is not the pinned {SHA256[asset]}")
     return target
 
 
@@ -49,25 +97,21 @@ def _binary(archive: Path, into: Path, name: str) -> Path:
     return next(p for p in out.rglob(name) if p.is_file())
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], system: str | None = None, machine: str | None = None) -> int:
     dest = Path(argv[argv.index("--dest") + 1]) if "--dest" in argv else DEFAULT_DEST
+    system = platform.system() if system is None else system
+    machine = platform.machine() if machine is None else machine
+    assets = assets_for(system, machine)  # refuses before anything is written or downloaded
     dest.mkdir(parents=True, exist_ok=True)
-    system = platform.system()
+    name = "cadmpeg.exe" if system == "Windows" else "cadmpeg"
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
-        if system == "Windows":
-            binary = _binary(_fetch("cadmpeg-x86_64-pc-windows-msvc.zip", work), work, "cadmpeg.exe")
-            shutil.copy2(binary, dest / "cadmpeg.exe")
-        elif system == "Darwin":
-            arm = _binary(_fetch("cadmpeg-aarch64-apple-darwin.tar.xz", work), work, "cadmpeg")
-            intel = _binary(_fetch("cadmpeg-x86_64-apple-darwin.tar.xz", work), work, "cadmpeg")
-            subprocess.run(
-                ["lipo", "-create", str(arm), str(intel), "-output", str(dest / "cadmpeg")], check=True
-            )
+        binaries = [_binary(_fetch(asset, work), work, name) for asset in assets]
+        if len(binaries) > 1:
+            subprocess.run(["lipo", "-create", *map(str, binaries), "-output", str(dest / name)], check=True)
         else:
-            binary = _binary(_fetch("cadmpeg-x86_64-unknown-linux-gnu.tar.xz", work), work, "cadmpeg")
-            shutil.copy2(binary, dest / "cadmpeg")
-    installed = dest / ("cadmpeg.exe" if system == "Windows" else "cadmpeg")
+            shutil.copy2(binaries[0], dest / name)
+    installed = dest / name
     installed.chmod(0o755)
     print(
         subprocess.run(

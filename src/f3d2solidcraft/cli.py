@@ -16,6 +16,7 @@ from pathlib import Path
 
 import zstandard
 
+from f3d2solidcraft import __version__
 from f3d2solidcraft.engine import BodyUnmeasurable, CommandRefused, Engine, EngineError
 from f3d2solidcraft.fallback import apply_fallback, name_bodies, original_step
 from f3d2solidcraft.mappers import MAPPERS
@@ -495,8 +496,24 @@ def _event(payload: dict) -> None:
     print(json.dumps(payload), flush=True)
 
 
+def _utf8_output() -> None:
+    """Write UTF-8 on every system, as the desktop app's worker does.
+
+    On Windows a pipe or a file gets the ANSI code page otherwise: a design named with a letter that
+    code page lacks (`Ω` in cp1252) stopped the command with UnicodeEncodeError after the conversion
+    was done, and a script reading the output had to guess its encoding. A Windows console is not
+    affected: Python writes to it in UTF-16 whatever this says.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None and (stream.encoding or "").lower().replace("-", "") != "utf8":
+            reconfigure(encoding="utf-8", errors=stream.errors)
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     parser = argparse.ArgumentParser(prog="f3d2solidcraft")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("convert", help="convert a .f3d or .f3z into a .solidcraft design")
     c.add_argument("f3d", type=Path)
