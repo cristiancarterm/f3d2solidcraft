@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "f3d2solidcraft"
+# One place for the version: `src/f3d2solidcraft/__init__.py`, which the MCP server reports too.
+dynamic = ["version"]
+description = "Convert Autodesk Fusion .f3d/.f3z designs into editable SolidCraft designs"
+readme = "README.md"
+license = "MIT"
+# Ours and the vendored reader's: `_vendor/ezf3d` is MIT and ships with its own copy, which the
+# wheel carries inside the package as well.
+license-files = ["LICENSE", "src/f3d2solidcraft/_vendor/ezf3d/LICENSE"]
+requires-python = ">=3.13"
+dependencies = ["zstandard>=0.22"]
+authors = [{ name = "Cristián Carter", email = "cristian@mitocondria.cl" }]
+keywords = ["fusion", "fusion360", "f3d", "solidcraft", "cad", "step", "converter"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Manufacturing",
+    # Where it is actually exercised: macOS by hand and Linux in CI. Windows is untested, and
+    # `bench` uses `os.wait4`, so it is left out rather than claimed.
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/cristiancarterm/f3d2solidcraft"
+Issues = "https://github.com/cristiancarterm/f3d2solidcraft/issues"
+
+[project.optional-dependencies]
+gui = ["PySide6-Essentials>=6.8"]
+
+[project.scripts]
+f3d2solidcraft = "f3d2solidcraft.cli:main"
+
+[project.gui-scripts]
+f3d2solidcraft-app = "f3d2solidcraft_app.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.5"]
+gui-dev = ["pytest-qt>=4.4", "PySide6-Essentials>=6.8"]
+
+[tool.hatch.version]
+path = "src/f3d2solidcraft/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/f3d2solidcraft", "src/f3d2solidcraft_app"]
+
+[tool.briefcase]
+project_name = "f3d2solidcraft"
+bundle = "cl.mitocondria"
+version = "0.3.0"  # the package's own version: tests/app/test_packaging.py keeps the two equal
+url = "https://github.com/cristiancarterm/f3d2solidcraft"
+# The license comes from [project] (PEP 639: `license` + `license-files`); Briefcase refuses both forms.
+author = "Cristián Carter"
+
+# Briefcase runs the module named after the app: `f3d2solidcraft-app` runs `f3d2solidcraft_app`, the
+# window. Named `f3d2solidcraft` it would run the converter's CLI. The formal name is what the user sees.
+[tool.briefcase.app.f3d2solidcraft-app]
+formal_name = "f3d2solidcraft"
+description = "Convert Autodesk Fusion designs into editable SolidCraft designs"
+sources = ["src/f3d2solidcraft", "src/f3d2solidcraft_app"]
+requires = ["zstandard>=0.22", "PySide6-Essentials>=6.8"]
+# Briefcase adds .icns (macOS), .ico (Windows) or -<size>.png (Linux); scripts/make_icons.py renders them.
+icon = "src/f3d2solidcraft_app/resources/icon"
+
+[tool.briefcase.app.f3d2solidcraft-app.macOS]
+# PySide6-Essentials 6.12 (the Qt the tests run on) ships only macosx_14_0 wheels; Briefcase's default
+# of 11.0 finds no Qt at all.
+min_os_version = "14.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+extend-exclude = ["src/f3d2solidcraft/_vendor", "docs"]

@@ -1,0 +1,98 @@
+"""Every text the window shows, in neutral Spanish and in English (spec, Arquitectura 5).
+
+The technical reasons of each feature stay in English, as the converter writes them.
+"""
+
+TEXTS: dict[str, dict[str, str]] = {
+    "es": {
+        "title": "f3d2solidcraft",
+        "step_file": "① Archivo",
+        "step_convert": "② Convertir",
+        "step_result": "③ Resultado",
+        "drop_here": "Suelta aquí un archivo .f3d o .f3z",
+        "choose_file": "Elegir archivo…",
+        "holds": "{parameters} parámetros · {sketches} bocetos · {features} operaciones",
+        "save_as": "Guardar como: {name}",
+        "change_output": "Cambiar…",
+        "replace_question": "{name} ya existe. ¿Quieres reemplazarlo?",
+        "replace_question_both": "{name} y {report} ya existen. ¿Quieres reemplazarlos?",
+        "same_as_input": "No se puede guardar sobre el archivo original: elige otro nombre.",
+        "not_solidcraft": "Eso no es SolidCraft: elige el programa solidcraft-cli o SolidCraft.app.",
+        "not_a_design": "Ese archivo no es un diseño de Fusion (.f3d o .f3z).",
+        "convert": "Convertir",
+        "engines_ok": "✓ SolidCraft {solidcraft} · ✓ cadmpeg {cadmpeg}",
+        "checking_engines": "Revisando SolidCraft y cadmpeg…",
+        "missing_solidcraft": "No se encontró SolidCraft",
+        "missing_solidcraft_detail": "Para convertir hace falta SolidCraft {minimum} o más reciente. {why}",
+        "missing_cadmpeg": "No se pudo usar cadmpeg",
+        "missing_cadmpeg_detail": "Para leer el archivo de Fusion hace falta cadmpeg, que viene con el programa. {why}",
+        "inspect_failed": "No se pudo leer el archivo: {why}",
+        "download_solidcraft": "Descargar SolidCraft",
+        "locate_solidcraft": "Ya lo tengo: buscarlo…",
+        "check_again": "Volver a revisar",
+        "progress": "Operación {index} de {total} · {name}",
+        "starting": "Preparando la conversión…",
+        "slow_note": "Algunas operaciones se miden contra el original: puede tardar un par de minutos.",
+        "cancel": "Cancelar",
+        "verified": "✓ Verificado: la pieza coincide con el original",
+        "differs": "Se guardó, pero la pieza no coincide del todo con el original",
+        "failed": "No se pudo convertir",
+        "editable": "{editable} de {total} operaciones quedaron editables en SolidCraft",
+        "imported": "{imported} llegaron como cuerpos importados",
+        "details": "Ver detalle por operación",
+        "save_report": "Guardar reporte…",
+        "copy_error": "Copiar detalle para reportarlo",
+        "convert_another": "Convertir otro",
+        "open_in_solidcraft": "Abrir en SolidCraft",
+    },
+    "en": {
+        "title": "f3d2solidcraft",
+        "step_file": "① File",
+        "step_convert": "② Convert",
+        "step_result": "③ Result",
+        "drop_here": "Drop a .f3d or .f3z file here",
+        "choose_file": "Choose file…",
+        "holds": "{parameters} parameters · {sketches} sketches · {features} features",
+        "save_as": "Save as: {name}",
+        "change_output": "Change…",
+        "replace_question": "{name} already exists. Do you want to replace it?",
+        "replace_question_both": "{name} and {report} already exist. Do you want to replace them?",
+        "same_as_input": "The result cannot be saved over the original file: choose another name.",
+        "not_solidcraft": "That is not SolidCraft: choose the solidcraft-cli program or SolidCraft.app.",
+        "not_a_design": "That file is not a Fusion design (.f3d or .f3z).",
+        "convert": "Convert",
+        "engines_ok": "✓ SolidCraft {solidcraft} · ✓ cadmpeg {cadmpeg}",
+        "checking_engines": "Checking SolidCraft and cadmpeg…",
+        "missing_solidcraft": "SolidCraft was not found",
+        "missing_solidcraft_detail": "Converting needs SolidCraft {minimum} or newer. {why}",
+        "missing_cadmpeg": "cadmpeg could not be used",
+        "missing_cadmpeg_detail": "Reading the Fusion file needs cadmpeg, which comes with the app. {why}",
+        "inspect_failed": "Could not read the file: {why}",
+        "download_solidcraft": "Download SolidCraft",
+        "locate_solidcraft": "I have it: locate it…",
+        "check_again": "Check again",
+        "progress": "Feature {index} of {total} · {name}",
+        "starting": "Preparing the conversion…",
+        "slow_note": "Some features are measured against the original: this can take a couple of minutes.",
+        "cancel": "Cancel",
+        "verified": "✓ Verified: the part matches the original",
+        "differs": "Saved, but the part does not fully match the original",
+        "failed": "Could not convert",
+        "editable": "{editable} of {total} features are editable in SolidCraft",
+        "imported": "{imported} came in as imported bodies",
+        "details": "Show details per feature",
+        "save_report": "Save report…",
+        "copy_error": "Copy details to report it",
+        "convert_another": "Convert another",
+        "open_in_solidcraft": "Open in SolidCraft",
+    },
+}
+
+
+def language(locale_name: str) -> str:
+    """`es` for a Spanish locale, `en` for anything else."""
+    return "es" if locale_name.lower().startswith("es") else "en"
+
+
+def t(key: str, lang: str, **values: object) -> str:
+    return TEXTS[lang][key].format(**values)

@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E8EEF5"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6CC6FF"/>
+      <stop offset="1" stop-color="#2AA8FF"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS-style rounded square, inset 100 px as Apple's icon grid asks -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="185" fill="none" stroke="#0B2239" stroke-opacity="0.08" stroke-width="3"/>
+
+  <!-- the solid: an isometric block -->
+  <g transform="translate(512 512) scale(1.0)">
+    <polygon points="0,-250 216,-125 0,0 -216,-125" fill="url(#top)"/>
+    <polygon points="-216,-125 0,0 0,250 -216,125" fill="#0098FF"/>
+    <polygon points="216,-125 0,0 0,250 216,125" fill="#0B2239"/>
+    <g fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linejoin="round" stroke-opacity="0.9">
+      <polyline points="-216,-125 0,0 216,-125"/>
+      <line x1="0" y1="0" x2="0" y2="250"/>
+    </g>
+  </g>
+</svg>
