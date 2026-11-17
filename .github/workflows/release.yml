@@ -150,6 +150,46 @@ jobs:
       - run: uv run --no-project python scripts/fetch_cadmpeg.py
       - run: uvx briefcase==0.4.7 create ${{ matrix.platform }} ${{ matrix.format }} ${{ matrix.flags }} --no-input
       - run: uvx briefcase==0.4.7 build ${{ matrix.platform }} ${{ matrix.format }} ${{ matrix.flags }} --no-input
+      # The built app itself, run as the window runs it, before it is packaged: `--check`, the worker's
+      # inspection and a real conversion with `--progress`, each read with the window's own code and
+      # failing on empty output. On Windows from a parent with no console, like the window: Briefcase's
+      # stub sends stdout to a log file then, which is how 0.3.1's app lost everything its worker wrote
+      # («Could not read the file: exit code 0»). The tests run from source through a console Python and
+      # never saw it. SolidCraft is the runner's, pinned like in ci.yml; cadmpeg is the one in the app.
+      - name: The built app answers as the window expects
+        env:
+          SOLIDCRAFT: "0.43.0"
+          SAMPLE_URL: https://github.com/user-attachments/files/33617507/test.weird.box_f3d.zip
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          url="https://github.com/tangency-labs/solidcraft/releases/download/v$SOLIDCRAFT"
+          curl -fsSL -o "$tmp/SHA256SUMS.txt" "$url/SHA256SUMS.txt"
+          case "$RUNNER_OS" in
+            Linux)
+              asset="solidcraft-$SOLIDCRAFT-linux-x86_64.tar.gz"
+              curl -fsSL -o "$tmp/$asset" "$url/$asset"
+              ( cd "$tmp" && grep " $asset\$" SHA256SUMS.txt | sha256sum -c - )
+              tar -xzf "$tmp/$asset" -C "$tmp" --strip-components=2 "solidcraft-$SOLIDCRAFT-linux-x86_64/bin/solidcraft-cli"
+              cli="$tmp/solidcraft-cli" ;;
+            macOS)
+              asset="solidcraft-cli-$SOLIDCRAFT-macos-universal.zip"
+              curl -fsSL -o "$tmp/$asset" "$url/$asset"
+              ( cd "$tmp" && grep " $asset\$" SHA256SUMS.txt | shasum -a 256 -c - )
+              unzip -q "$tmp/$asset" -d "$tmp"
+              cli="$tmp/solidcraft-cli-$SOLIDCRAFT-macos-universal/solidcraft-cli" ;;
+            Windows)
+              asset="solidcraft-$SOLIDCRAFT-windows-x64-portable.zip"
+              curl -fsSL -o "$tmp/$asset" "$url/$asset"
+              ( cd "$tmp" && grep " $asset\$" SHA256SUMS.txt | sha256sum -c - )
+              unzip -q "$tmp/$asset" -d "$tmp"
+              cli=$(cygpath -w "$tmp/solidcraft-$SOLIDCRAFT-windows-x64-portable/solidcraft-cli.exe") ;;
+          esac
+          chmod +x "$cli" 2>/dev/null || true
+          export F3D2SC_SOLIDCRAFT_CLI="$cli"
+          curl -fsSL -o "$tmp/sample.zip" "$SAMPLE_URL"
+          uv run --no-project python -m zipfile -e "$tmp/sample.zip" "$tmp/sample"
+          uv run --no-project python scripts/smoke_packaged.py build "$tmp/sample/test weird box.f3d" "$tmp/out"
       - run: uvx briefcase==0.4.7 package ${{ matrix.platform }} ${{ matrix.format }} ${{ matrix.flags }} ${{ matrix.platform == 'macOS' && '--adhoc-sign' || '' }} --no-input
       - uses: actions/upload-artifact@v4
         with:

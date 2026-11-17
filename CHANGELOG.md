@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2
+
+- Windows app: loading a file failed with "Could not read the file: exit code 0", whatever the file. The
+  installed app runs its own converter in a second process, and the launcher Briefcase builds sent that process's
+  output to a log file instead of back to the window whenever it was started without a console, which is always
+  the case from the window. The window now reads the converter's output and errors from one pipe, which survives
+  that launcher, and the converter writes back to it.
+- Release: before packaging, each installer's built app is run as the window runs it (from a parent with no
+  console on Windows): `--check`, inspecting the public sample and a full conversion with progress, which must
+  end verified. A build whose app prints nothing fails the release.
+
 ## 0.3.1
 
 - Desktop app: the "Save as" line and its "Change…" button only appear once a file is loaded.

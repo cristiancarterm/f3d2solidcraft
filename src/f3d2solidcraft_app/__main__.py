@@ -5,6 +5,11 @@ import sys
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] in (["--worker"], ["--check"]):
+        # Packaged on Windows, the launcher may have moved stdout off the window's pipe (`stdio`).
+        from f3d2solidcraft_app.stdio import attach_std_streams
+
+        attach_std_streams()
     if argv[:1] == ["--worker"]:
         from f3d2solidcraft_app.runner import lead_own_group
 

@@ -36,6 +36,7 @@ from f3d2solidcraft_app.events import Feature, parse
 from f3d2solidcraft_app.opener import open_design
 from f3d2solidcraft_app.outcome import Outcome, outcome_from
 from f3d2solidcraft_app.runner import OWN_GROUP, kill_group, kill_tree, partial_paths, worker_command
+from f3d2solidcraft_app.stdio import ONE_PIPE
 from f3d2solidcraft_app.texts import language, t
 
 if sys.platform == "win32":
@@ -104,7 +105,7 @@ class Wizard(QMainWindow):
         self._checker = _Checker()
         self._checker.done.connect(self._engines_checked)
         self.buffer = ""
-        self.stderr = ""
+        self.stderr = ""  # the worker's text: every line of its one pipe that is not a progress event
         self.cancelled = False
         self.setWindowTitle(t("title", self.lang))
         self.setAcceptDrops(True)
@@ -306,7 +307,12 @@ class Wizard(QMainWindow):
         groups instead, or if Windows refused to make one (then `kill_tree` falls back to taskkill).
         """
         process = QProcess(self)
+        # stdout and stderr in one pipe: packaged on Windows, the worker's launcher moves its stdout
+        # off the pipe it was given, and only a pipe shared with stderr survives that (`stdio`). The
+        # window tells the two apart by line: JSON lines are the converter's, the rest is its text.
+        process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         environment = QProcessEnvironment.systemEnvironment()
+        environment.insert(ONE_PIPE, "1")
         environment.insert(OWN_GROUP, "1")  # so `kill_tree` reaches the engines too
         if self.solidcraft is not None and self.solidcraft.ok and self.solidcraft.path is not None:
             environment.insert("F3D2SC_SOLIDCRAFT_CLI", str(self.solidcraft.path))
@@ -492,8 +498,12 @@ class Wizard(QMainWindow):
                     continue
                 break
         if code != 0 or not isinstance(counts, dict):
-            err = bytes(process.readAllStandardError()).decode("utf-8", "replace").strip()
-            why = err.splitlines()[-1].removeprefix("error: ") if err else f"exit code {code}"
+            err = "\n".join(line for line in out.splitlines() if not line.startswith("{")).strip()
+            why = (
+                _error_line(err).strip().splitlines()[-1].removeprefix("error: ")
+                if err
+                else f"exit code {code}"
+            )
             self._forget_file()
             self.holds_label.setText(t("inspect_failed", self.lang, why=why))
             return
@@ -532,7 +542,6 @@ class Wizard(QMainWindow):
         job = _Job(process, 0, self.output, self.report)
         self.job = job
         process.readyReadStandardOutput.connect(self._read_progress)
-        process.readyReadStandardError.connect(self._read_errors)
         process.finished.connect(lambda code, status: self._finished(job, code, status))
         process.errorOccurred.connect(lambda error: self._failed_to_start(job, error))
         args = [
@@ -556,17 +565,14 @@ class Wizard(QMainWindow):
         *lines, self.buffer = self.buffer.split("\n")
         for line in lines:
             event = parse(line)
+            if event is None:  # the converter's own text (stderr and stdout share the pipe)
+                self.stderr += line.rstrip("\r") + "\n"
             if isinstance(event, Feature):
                 self.bar.setRange(0, event.total)
                 self.bar.setValue(event.index)
                 self.progress_label.setText(
                     t("progress", self.lang, index=event.index, total=event.total, name=event.name)
                 )
-
-    def _read_errors(self) -> None:
-        if self.process is None:
-            return
-        self.stderr += bytes(self.process.readAllStandardError()).decode("utf-8", "replace")
 
     def _kill(self, job: _Job) -> None:
         """The worker and the engines under it: `QProcess.kill()` alone reaches only the worker."""
@@ -596,7 +602,10 @@ class Wizard(QMainWindow):
     def _finished(self, job: _Job, code: int, status: QProcess.ExitStatus) -> None:
         if job is not self.job:
             return
-        self._read_errors()
+        self._read_progress()
+        if self.buffer.strip() and parse(self.buffer) is None:
+            self.stderr += self.buffer  # a last line without its newline
+        self.buffer = ""
         crashed = status == QProcess.ExitStatus.CrashExit
         if self.cancelled or crashed:
             kill_group(job.pid)  # whatever the worker left behind keeps its group id

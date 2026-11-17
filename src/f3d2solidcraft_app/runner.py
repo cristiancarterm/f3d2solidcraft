@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from f3d2solidcraft_app.stdio import ONE_PIPE
+
 #: Set by the window in the worker's environment: the worker then leads a process group of its own,
 #: so cancelling can reach the engines it starts (`kill_tree`). A worker run by hand from a terminal
 #: does not get it and stays in the terminal's group, where Ctrl-C reaches it.
@@ -27,11 +29,23 @@ def check_worker(executable: str = sys.executable) -> tuple[list[str], str | Non
     """
     command = worker_command(["--help"], executable)
     try:
-        done = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        # One pipe for both streams, as the window starts it (`stdio`: that is what lets a packaged
+        # Windows worker keep its stdout).
+        done = subprocess.run(
+            command,
+            env={**os.environ, ONE_PIPE: "1"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         return command, f"does not run: {exc}"
     if done.returncode != 0 or "convert" not in done.stdout:
-        return command, f"did not answer as the converter (exit {done.returncode}): {done.stderr[-300:]}"
+        return command, f"did not answer as the converter (exit {done.returncode}): {done.stdout[-300:]}"
     return command, None
 
 

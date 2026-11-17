@@ -815,3 +815,35 @@ def test_there_is_no_report_to_save_after_an_error_without_one(qtbot, tools, sam
     qtbot.waitUntil(lambda: wizard.pages.currentIndex() == RESULT, timeout=10_000)
     assert wizard.outcome.kind == "error"
     assert not wizard.save_report_button.isVisibleTo(wizard)
+
+
+def test_the_converters_error_reaches_the_first_step(qtbot, tools, sample_f3d, tmp_path):
+    # The worker's stdout and stderr share one pipe (`stdio`): its error line still names the problem,
+    # never a bare "exit code".
+    wizard = Wizard(lang="en", settings_path=tmp_path / "settings.json")
+    qtbot.addWidget(wizard)
+    wizard.load_file(sample_f3d)
+    qtbot.waitUntil(lambda: wizard.convert_button.isEnabled(), timeout=120_000)
+    broken = tmp_path / "broken.f3d"
+    broken.write_bytes(sample_f3d.read_bytes()[:4096])
+    wizard.load_file(broken)
+    qtbot.waitUntil(lambda: wizard.inspecting is None and wizard.holds_label.text() != "", timeout=60_000)
+    shown = wizard.holds_label.text()
+    assert shown.startswith("Could not read the file: ") and "exit code" not in shown, shown
+    assert not shown.endswith(": "), shown
+
+
+def test_the_converters_error_reaches_the_result_step(qtbot, tools, sample_f3d, tmp_path):
+    design = tmp_path / "box.f3d"
+    design.write_bytes(sample_f3d.read_bytes())
+    wizard = Wizard(lang="en", settings_path=tmp_path / "settings.json")
+    qtbot.addWidget(wizard)
+    wizard.load_file(design)
+    wizard.output = tmp_path / "box.solidcraft"
+    qtbot.waitUntil(lambda: wizard.convert_button.isEnabled(), timeout=120_000)
+    design.unlink()  # gone between the inspection and the conversion: the converter says so
+    wizard.start_conversion()
+    qtbot.waitUntil(lambda: wizard.pages.currentIndex() == RESULT, timeout=120_000)
+    assert wizard.outcome.kind == "error"
+    assert wizard.outcome.message and "stopped with code" not in wizard.outcome.message, wizard.outcome
+    assert "{" not in wizard.outcome.message  # no progress event taken for the error
