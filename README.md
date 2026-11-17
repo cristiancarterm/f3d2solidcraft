@@ -9,6 +9,8 @@ bounding box and centre of mass (within 0.01 mm), same face count.
 
 *Guía en español: [docs/guia.md](docs/guia.md).*
 
+![The desktop app converting a Fusion design, verified against the original and opened in SolidCraft](https://raw.githubusercontent.com/cristiancarterm/f3d2solidcraft/main/docs/media/demo.gif)
+
 ## Status
 
 Early, and honest about it. On the corpus of 15 real designs it is developed against:

@@ -9,6 +9,8 @@ Cada conversión se compara con el original antes de entregártela: los mismos c
 margen de 0,1 %), la misma caja envolvente y el mismo centro de masa (con un margen de 0,01 mm) y la misma cantidad de
 caras.
 
+![El programa de escritorio convierte un diseño de Fusion, lo verifica contra el original y lo abre en SolidCraft](media/demo.gif)
+
 *English: [README.md](../README.md).*
 
 ## Estado
