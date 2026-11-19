@@ -39,7 +39,9 @@ class NoGeometry(Exception):
 class Context:
     engine: Engine
     design: Design
-    param_names: dict[str, str]  # Fusion parameter -> SolidCraft parameter
+    # Fusion parameter -> what a feature is handed for it: a SolidCraft parameter's name, or for one
+    # in `param_inlined` the name or the formula it restates (`HingeDiameter / 2`).
+    param_names: dict[str, str]
     sketch_names: dict[str, str]  # cadmpeg sketch id -> SolidCraft sketch name
     # cadmpeg sketch entity id -> every SolidCraft curve it was drawn as. Nearly always one;
     # a spline whose interior knots are uneven comes as a chain of Bézier segments (spec 76),
@@ -75,6 +77,10 @@ class Context:
     # Fusion parameter -> (the value the engine computed for it, its unit), as `parameters.add`
     # answered. What a mapper checks before it lets a feature follow a parameter (`params.follows`).
     param_values: dict[str, tuple[float, str]] = field(default_factory=dict)
+    # Fusion parameters that are not in the design because they only restate the user's names: for
+    # these `param_names` holds the name or the formula a feature is handed, not a parameter to
+    # change (`params.driver` finds the one that is).
+    param_inlined: set[str] = field(default_factory=set)
 
 
 Mapper = Callable[[Feature, Context], list[str] | tuple[str, list[str]]]

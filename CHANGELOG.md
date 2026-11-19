@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1
+
+- Parameters: features and sketch dimensions now show the names you gave your parameters instead of Fusion's
+  internal ones. Fusion stores each dimension as its own model parameter (`d7`, `d34`), and the converter used to
+  create every one of them as `fusion_d7`, `fusion_d34`, so the timeline read `fusion_d7` where your design says
+  `CaseExteriorWidth`. Now a model parameter that is just one of your parameters is replaced by that name, and
+  one that is a formula of your parameters is replaced by the formula itself (`HingeDiameter / 2`). A model
+  parameter that only repeats another model parameter (`d2 = d1`) is replaced by that one. Those model parameters
+  are no longer created; the ones that are plain numbers, or formulas over those, still are, and keep their
+  `fusion_dN` names. The geometry is the same as in 0.4.0. Measured on `Caja parametrica v2`, the model parameters
+  created drop from 90 to 42; on `corpus-03`, from 63 to 53. Where a body comes in as an imported body rather
+  than rebuilt, changing a parameter updates the timeline but does not move that body yet.
+
 ## 0.4.0
 
 - Parameters: every feature now takes its parameters from its own record in the file, even when the two readers

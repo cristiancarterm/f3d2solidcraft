@@ -223,7 +223,7 @@ class Engine:
         return _answer(text)
 
     def execute(self, command: str, params: dict | None = None) -> Any:
-        """Run a modelling command. Each success is one undo step."""
+        """Run a command. One that changes the design is one undo step; a query (`expr.evaluate`) is none."""
         try:
             out = self.call("execute", {"command": command, "params": params or {}})
         except CommandRefused as exc:

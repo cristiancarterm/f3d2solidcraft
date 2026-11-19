@@ -281,7 +281,8 @@ def test_every_parameter_of_a_parametric_design_is_created(tools, corpus_design)
     """End to end on the real engine: `Caja parametrica v2` arrives whole.
 
     With the table read there is nothing left to refuse — all 109, the user's own among them, with
-    the expressions the file holds. Nothing is accepted on trust either: `parameters.add` answers
+    the expressions the file holds; the model parameters that only restate them are valued and not
+    created. Nothing is accepted on trust either: `parameters.add` answers
     with the value it computed, and none came out anywhere but where the file resolved it.
     """
     design = corpus_design("Caja parametrica v2.f3d")
@@ -293,7 +294,9 @@ def test_every_parameter_of_a_parametric_design_is_created(tools, corpus_design)
     assert warnings == []
     assert len(ctx.param_names) == len(design.parameters) == 109
     names = {p["name"] for p in listed}
-    assert "CaseExteriorWidth" in names and "fusion_d7" in names
+    # `d7 = CaseExteriorWidth` restates the name, so it is not a parameter of its own (0.4.1);
+    # `d10 = 0.0 deg` is a plain number and keeps one.
+    assert "CaseExteriorWidth" in names and "fusion_d10" in names and "fusion_d7" not in names
     assert {p["value"] for p in listed if p["name"] == "CaseExteriorWidth"} == {150.0}
     # the formula the designer wrote, not a number standing in for it
     formula = next(p for p in listed if p["name"] == "X_ComputedEdgeChamfer")

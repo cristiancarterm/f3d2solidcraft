@@ -18,6 +18,7 @@ from f3d2solidcraft.geometry import (
 )
 from f3d2solidcraft.mappers import JOIN_TOUCHING, Context, Unsupported, definition, register
 from f3d2solidcraft.mappers.outputs import name_outputs, no_target
+from f3d2solidcraft.mappers.params import negated
 from f3d2solidcraft.model import Feature
 from f3d2solidcraft.oracle import (
     OracleUnavailable,
@@ -177,7 +178,7 @@ def _distance(ctx: Context, feature: Feature) -> tuple[str, list[str]]:
         return f"{ex.length_mm} mm", []
     sc = ctx.param_names[name]
     # Fusion stores a reversed extrude as a negative distance; direction carries the sign here.
-    return (f"-{sc}" if (param.value_mm or 0.0) < 0 else sc), []
+    return (negated(sc) if (param.value_mm or 0.0) < 0 else sc), []
 
 
 def _extent(ctx: Context, feature: Feature) -> tuple[dict, list[str]]:

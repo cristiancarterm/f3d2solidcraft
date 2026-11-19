@@ -8,6 +8,7 @@ from pathlib import Path
 from f3d2solidcraft.engine import CommandRefused, Engine, EngineError
 from f3d2solidcraft.fallback import same_body
 from f3d2solidcraft.mappers import Context
+from f3d2solidcraft.mappers.params import driver
 from f3d2solidcraft.replay import ReplayResult
 
 
@@ -116,23 +117,26 @@ def native_names(ctx: Context, result: ReplayResult) -> set[str]:
 
 
 def _driving_fusion_parameter(ctx: Context, result: ReplayResult) -> str | None:
-    """First parameter driving a mapped extrude whose output is still a native body at the end."""
+    """Parameter driving the first mapped extrude whose output is still a native body at the end.
+
+    A distance that is an alias of another name (`d125 = LatchFrameThickness`) has no parameter of
+    its own in the design, so the one exercised is the name it restates (`params.driver`). A distance
+    that is a formula has no single parameter to nudge, so that extrude is passed over for the next.
+    """
     native = native_names(ctx, result)
     # inferred counts with exact: the check only asks whether changing a parameter rebuilds the
     # design, and an inferred extrude whose body survives natively drives real geometry; whether
     # that geometry matches Fusion is what the volume/bbox/face verification already answers.
     mapped = {r.ordinal for r in result.features if r.status in ("exact", "inferred")}
-    return next(
-        (
-            f.extrude.distance_param
-            for f in sorted(ctx.design.features, key=lambda f: f.ordinal)
-            if f.extrude
-            and f.ordinal in mapped
-            and f.extrude.distance_param in ctx.param_names
-            and any(ctx.body_names.get(b) in native for b in f.outputs)
-        ),
-        None,
+    drivers = (
+        driver(ctx, f.extrude.distance_param)
+        for f in sorted(ctx.design.features, key=lambda f: f.ordinal)
+        if f.extrude
+        and f.ordinal in mapped
+        and f.extrude.distance_param in ctx.param_names
+        and any(ctx.body_names.get(b) in native for b in f.outputs)
     )
+    return next((name for name in drivers if name is not None), None)
 
 
 def driving_parameter(ctx: Context, result: ReplayResult) -> str | None:

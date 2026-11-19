@@ -59,7 +59,7 @@ packages = ["src/f3d2solidcraft", "src/f3d2solidcraft_app"]
 [tool.briefcase]
 project_name = "f3d2solidcraft"
 bundle = "cl.mitocondria"
-version = "0.4.0"  # the package's own version: tests/app/test_packaging.py keeps the two equal
+version = "0.4.1"  # the package's own version: tests/app/test_packaging.py keeps the two equal
 url = "https://github.com/cristiancarterm/f3d2solidcraft"
 # The license comes from [project] (PEP 639: `license` + `license-files`); Briefcase refuses both forms.
 author = "Cristián Carter"
