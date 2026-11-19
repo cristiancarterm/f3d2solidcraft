@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections import Counter
 from pathlib import Path
 
 from f3d2solidcraft.model import Design
@@ -19,6 +20,16 @@ def _restore_label(name: str, substituted: dict[str, str]) -> str:
         if name.startswith(en):
             return es + name[len(en) :]
     return name
+
+
+def _same_label(record: str, tag: str) -> bool:
+    """Whether ezf3d's record and cadmpeg's feature name the same kind of operation.
+
+    The record carries the label Fusion writes (`Extrude`, `Base Feature`) and cadmpeg's `source_tag`
+    is that same label; spaces are ignored because the record of `OffsetFaces` and its id spell it
+    without one. Measured over the 13 `.f3d` of the corpus and the sample: equal in every pairing.
+    """
+    return record.replace(" ", "") == tag.replace(" ", "")
 
 
 def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
@@ -39,24 +50,25 @@ def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
             f"{len(cad.not_features)} record(s) of the features array are not timeline features "
             f"and were skipped: they carry no name ({', '.join(cad.not_features[:3])})"
         )
-    aligned = fusion.feature_count == len(cad.features)
-    if not aligned:
-        warnings.append(
-            f"timeline mismatch: ezf3d reads {fusion.feature_count} features, cadmpeg "
-            f"{len(cad.features)}; parameters are not attached to features"
-        )
+    # Each feature is paired with its parameter record by the timeline item cadmpeg's id ends in,
+    # and only where the record's label is the feature's: a pairing the two readers do not agree on
+    # leaves the feature without parameters, counted, rather than bound to the wrong numbers.
+    claims = Counter(f.item for f in cad.features if f.item is not None)
     features = []
     sketches = dict(cad.sketches)
+    unpaired: list[str] = []
     for f in cad.features:
-        owned = fusion.by_feature.get(f.ordinal, ()) if aligned else ()
+        record = fusion.by_item.get(f.item) if f.item is not None and claims[f.item] == 1 else None
+        paired = record is not None and _same_label(record[0], f.tag)
+        owned = record[1] if paired else ()
+        if not paired:
+            unpaired.append(f.name)
         extrude = f.extrude
         if extrude is not None:
             along = next((p.name for p in owned if p.role == "AlongDistance"), None)
             extrude = dataclasses.replace(extrude, distance_param=along)
-        if aligned and f.sketch in sketches:
-            sketches[f.sketch] = dataclasses.replace(
-                sketches[f.sketch], dimensions=fusion.by_sketch.get(f.ordinal, ())
-            )
+        if paired and f.sketch in sketches:
+            sketches[f.sketch] = dataclasses.replace(sketches[f.sketch], dimensions=owned)
         features.append(
             dataclasses.replace(
                 f,
@@ -64,6 +76,11 @@ def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
                 extrude=extrude,
                 parameters=tuple(p.name for p in owned),
             )
+        )
+    if unpaired:
+        warnings.append(
+            f"{len(unpaired)} of {len(cad.features)} feature(s) could not be paired with a parameter "
+            f"record of the file, so they carry no parameters ({', '.join(unpaired[:3])})"
         )
     return Design(
         source=str(f3d),
@@ -74,4 +91,6 @@ def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
         warnings=warnings,
         components=cad.components,
         occurrences=cad.occurrences,
+        unpaired=[_restore_label(name, substituted) for name in unpaired],
+        paints=list(cad.paints),
     )

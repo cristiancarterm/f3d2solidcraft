@@ -37,6 +37,7 @@ from itertools import combinations
 from f3d2solidcraft.engine import CommandRefused, EngineError, rolled_back
 from f3d2solidcraft.mappers import Context, Unsupported, definition, register
 from f3d2solidcraft.mappers.components import placed_point
+from f3d2solidcraft.mappers.params import follows
 from f3d2solidcraft.model import Feature
 from f3d2solidcraft.oracle import (
     OracleUnavailable,
@@ -86,12 +87,14 @@ def _apply(ctx: Context, feature: Feature, body: str, points: list) -> None:
     op = feature.edge_op
     params = {"edges": list(points), "body": body}
     if op.kind == "fillet":
-        ctx.engine.execute("solid.fillet", {**params, "radius": f"{op.value} mm"})
+        radius = follows(ctx, feature, "Radius", op.value, "mm") or f"{op.value} mm"
+        ctx.engine.execute("solid.fillet", {**params, "radius": radius})
         return
     if op.angle_rad is not None:
         # angle_rad is an angle in radians, not a second distance: not mapped in M1.
         raise Unsupported("two-distance chamfer")
-    ctx.engine.execute("solid.chamfer", {**params, "distance": f"{op.value} mm"})
+    distance = follows(ctx, feature, "Distance", op.value, "mm") or f"{op.value} mm"
+    ctx.engine.execute("solid.chamfer", {**params, "distance": distance})
 
 
 def _edge_candidates(ctx: Context, body: str, oracle) -> list[dict]:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from f3d2solidcraft.engine import CommandRefused
 from f3d2solidcraft.mappers import Context
+from f3d2solidcraft.mappers.components import IMPORT_HOLDER
 from f3d2solidcraft.pairing import declared_name
 from f3d2solidcraft.replay import ReplayResult
 from f3d2solidcraft.tools import ToolFailed, run_tool
@@ -99,10 +100,46 @@ def same_body(
     return all(abs(x - y) <= com_abs for x, y in zip(here, there))
 
 
-def apply_fallback(ctx: Context, result: ReplayResult, step: Path) -> list[str]:
+def identical_to_original(ctx: Context, result: ReplayResult, reference: list[dict] | None) -> set[str]:
+    """The bodies the replay left unfinished that are, measured, the very body of the original.
+
+    A body is condemned to the fallback when a feature that shapes it could not be rebuilt, and that
+    says nothing about whether the body came out right anyway. Measured over the corpus's 13 such
+    bodies, one did: `corpus-02`'s `Body2`, 6654.503 mm³ and 14 faces on both sides. Removing
+    it threw a native body away for an imported copy of itself (spec 0.4, item 4).
+
+    The original is the oracle's reading, and which of its bodies to compare with is the one
+    `pairing.declared_name` names for the Fusion id — a body without one is not compared, because
+    against every body it could match the wrong one. The comparison is `same_body` with faces.
+    """
+    if not reference:
+        return set()
+    by_name = {r["name"]: r for r in reference}
+    standing = set(ctx.engine.body_names())
+    candidates = {}
+    for body_id in sorted(result.fallback_bodies):
+        name = ctx.body_names.get(body_id)
+        declared = declared_name(ctx.design, body_id, list(by_name))
+        if name in standing and declared is not None:
+            candidates[name] = by_name[declared]
+    if not candidates:
+        return set()
+    readings = {b["name"]: b for b in ctx.engine.body_readings(sorted(candidates))}
+    return {
+        name
+        for name, original in candidates.items()
+        if name in readings and same_body(readings[name], original, faces=True)
+    }
+
+
+def apply_fallback(
+    ctx: Context, result: ReplayResult, step: Path, reference: list[dict] | None = None
+) -> list[str]:
     """Swap the bodies the replay could not finish for the original B-rep; record what was imported.
 
     The names of the imported bodies that stay land in ``result.imported_bodies``; returns warnings.
+    `reference` is the oracle's reading of the original: a body it says is already identical to its
+    original stays native, and the import's copy of it goes as a duplicate.
     """
     if not result.fallback_bodies:
         return []
@@ -111,13 +148,16 @@ def apply_fallback(ctx: Context, result: ReplayResult, step: Path) -> list[str]:
     # import brings it back like any other. This said the opposite and was simply false.
     warnings: list[str] = []
     present = set(engine.body_names())
-    partial = sorted({ctx.body_names[b] for b in result.fallback_bodies if b in ctx.body_names} & present)
+    kept_native = identical_to_original(ctx, result, reference)
+    partial = sorted(
+        ({ctx.body_names[b] for b in result.fallback_bodies if b in ctx.body_names} & present) - kept_native
+    )
     if partial:
         engine.execute("solid.remove", {"bodies": partial})
     kept = engine.body_readings()
     kept_names = {b["name"] for b in kept}
     try:
-        engine.execute("file.insert_step", {"path": str(step), "name": "Fusion fallback"})
+        engine.execute("file.insert_step", {"path": str(step), "name": IMPORT_HOLDER})
     except CommandRefused as exc:
         # This one call *is* the safety net, and it was the only unprotected one in the path, so a
         # refusal here ended the whole conversion with the engine's error and no report at all.

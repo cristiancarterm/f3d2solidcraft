@@ -201,3 +201,34 @@ def corpus_ctx(tools, tmp_path):
             yield Context(eng, design, {}, {}, {}, {}, {})
 
     return load
+
+
+@pytest.fixture
+def saved_tree(tools):
+    """A saved design's component tree, and the names of the empty components the engine would let go.
+
+    Read in a fresh engine, and each empty component other than the root is offered to
+    `component.delete`: one it accepts is scaffolding the conversion should have removed. Nothing is
+    saved back, so asking does not change the file.
+    """
+    from f3d2solidcraft.engine import CommandRefused, Engine
+
+    def read(path: Path) -> tuple[list[dict], list[str]]:
+        with Engine(tools.solidcraft_cli, [path.parent]) as eng:
+            eng.call("open", {"path": str(path)})
+            tree = eng.execute("component.list", {"compact": True, "bodies": True})["components"]
+            deletable = []
+            for c in tree:
+                empty = not any(
+                    c.get(k) for k in ("bodies", "children", "features", "sketches", "construction")
+                )
+                if c.get("parent") is None or not empty:
+                    continue
+                try:
+                    eng.execute("component.delete", {"component": c["id"]})
+                except CommandRefused:
+                    continue
+                deletable.append(c["name"])
+        return tree, deletable
+
+    return read

@@ -9,7 +9,7 @@ import pytest
 
 from f3d2solidcraft.engine import Engine
 from f3d2solidcraft.fallback import apply_fallback, original_step
-from f3d2solidcraft.mappers.components import reconcile_components, world_transform
+from f3d2solidcraft.mappers.components import IMPORT_HOLDER, reconcile_components, world_transform
 from f3d2solidcraft.replay import replay
 
 
@@ -89,7 +89,7 @@ def test_imported_bodies_join_the_component_fusion_owns_them_in(tools, corpus_de
     # And the nesting is still Fusion's: Collet inside File Handle.
     assert by_id[holding["Collet"]["parent"]]["name"] == "File Handle"
     # The import's own holder stays, emptied: SolidCraft refuses to delete what bodies left.
-    assert any(c["name"] == "Fusion fallback" and not c["bodies"] for c in components)
+    assert any(c["name"] == IMPORT_HOLDER and not c["bodies"] for c in components)
 
 
 def test_a_design_without_components_builds_none(design, tools, tmp_path):

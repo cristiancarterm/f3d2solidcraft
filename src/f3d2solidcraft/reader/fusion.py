@@ -6,7 +6,7 @@ import io
 import json
 import struct
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from f3d2solidcraft._vendor.ezf3d.container.archive import F3DArchive
@@ -19,7 +19,7 @@ from f3d2solidcraft._vendor.ezf3d.model.parameters import (
     read_parameters,
 )
 from f3d2solidcraft._vendor.ezf3d.model.sketch import read_sketches
-from f3d2solidcraft._vendor.ezf3d.model.timeline import read_timeline
+from f3d2solidcraft._vendor.ezf3d.model.timeline import attribute, read_feature, read_timeline
 from f3d2solidcraft._vendor.ezf3d.streams.segment import Segment, read_segment
 from f3d2solidcraft.model import Parameter
 
@@ -51,6 +51,9 @@ class FusionParts:
     by_feature: dict[int, tuple[Parameter, ...]]
     by_sketch: dict[int, tuple[Parameter, ...]]
     feature_count: int
+    # Timeline item oid -> (the label of the feature record before it, the parameters that record
+    # owns). Keyed by the item because that is the one number cadmpeg's feature ids also carry.
+    by_item: dict[int, tuple[str, tuple[Parameter, ...]]] = field(default_factory=dict)
 
 
 def _convert(p) -> Parameter:
@@ -204,6 +207,25 @@ def _unread_table_entries(segment: Segment, read: Parameters) -> list[Parameter]
     return rescued
 
 
+def _by_item(segment: Segment, raw: Parameters) -> dict[int, tuple[str, tuple[Parameter, ...]]]:
+    """Every named feature record, keyed by the timeline item that follows it in the object index.
+
+    ezf3d's own rule (`timeline.py`): a feature is the object right before its timeline item, and a
+    parameter belongs to the nearest named feature record before it. The list ezf3d picks as *the*
+    timeline is not needed for this, and that is the point: on `corpus-03` it picks a list of 5
+    where cadmpeg reads 51, and every one of the 51 still has its record right before its item.
+    """
+    items = segment.objects()
+    body = segment.bulk.body
+    records = {e.oid: found for e in items if (found := read_feature(body, e)) is not None}
+    owned = attribute(records, raw)
+    return {
+        items[i + 1].oid: (records[e.oid][0], tuple(_convert(p) for p in owned.get(e.oid, ())))
+        for i, e in enumerate(items[:-1])
+        if e.oid in records and records[e.oid][0]
+    }
+
+
 def read_fusion(f3d: Path) -> FusionParts:
     with open_archive(f3d) as archive:
         segment, _, _ = design_streams(archive)
@@ -215,4 +237,4 @@ def read_fusion(f3d: Path) -> FusionParts:
     parameters = [_convert(p) for p in raw] + _unread_table_entries(segment, raw)
     by_feature = {f.index: tuple(_convert(p) for p in f.parameters) for f in timeline}
     by_sketch = {s.index: tuple(_convert(p) for p in s.parameters) for s in sketches}
-    return FusionParts(parameters, by_feature, by_sketch, len(timeline))
+    return FusionParts(parameters, by_feature, by_sketch, len(timeline), _by_item(segment, raw))

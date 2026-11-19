@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0
+
+- Parameters: every feature now takes its parameters from its own record in the file, even when the two readers
+  of the file count the timeline differently. Before, such a design got no parameter on any feature; now its
+  extrude distances and sketch dimensions are linked to their parameters in the SolidCraft timeline too. Where
+  those features' bodies still come in as imported bodies, changing the parameter updates the timeline but does
+  not move that geometry yet. The report counts the features that could not be paired (`unpaired_features`)
+  instead of a general "timeline mismatch" warning.
+- Fillet radii, chamfer distances and revolve angles follow the parameter that drives them in Fusion, when the
+  file names exactly one and its value matches.
+- Components: the saved design shows Fusion's component tree. A part the converter could not rebuild arrives with
+  Fusion's name and every placement, without an empty copy beside it, and the empty components the conversion
+  used to leave are removed. The container of the imported geometry is now called "Imported from Fusion". Known
+  limit: when the import arrives with the assembly flattened (seen in some `.f3z` packages), its bodies stay at
+  the level of "Imported from Fusion" and nested parts may carry generated names.
+- Colours: the bodies rebuilt as native SolidCraft features take the colour Fusion binds to them. Imported bodies
+  already kept theirs. Per-face colours are not applied yet: a rebuilt body gets its body colour only, and the
+  report warns when Fusion colours single faces of it.
+- A rebuilt body that comes out identical to the original is kept as a native body instead of being replaced by
+  the imported one.
+- Known limits: some empty components with repeated names can remain under "Imported from Fusion". They are the
+  import's own definitions whose bodies moved into the design's component; SolidCraft refuses to delete them
+  because it recorded that body transfer. They hold no geometry and change nothing but the tree.
+
 ## 0.3.2
 
 - Windows app: loading a file failed with "Could not read the file: exit code 0", whatever the file. The

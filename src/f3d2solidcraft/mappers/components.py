@@ -28,6 +28,9 @@ from f3d2solidcraft.mappers import Context
 from f3d2solidcraft.model import Component, Feature, Frame, Occurrence, Vec3
 
 ROOT = "root"
+# The component the fallback import lands in, under the design's root, and what the user sees it
+# called. Once named `Fusion fallback`, which read as an error in the file the user opens.
+IMPORT_HOLDER = "Imported from Fusion"
 
 # How far a rotation term may sit from the matrix the file states, and a translation from its
 # millimetres, for the placement to count as the one the file asked for. The engine answers in
@@ -432,63 +435,217 @@ def _placements(cid: object, by_id: dict, memo: dict[object, int]) -> int:
     return memo[cid]
 
 
+def _unlock(ctx: Context, holder: object, unlocked: set[object]) -> list[str]:
+    """Unlock the import's holder once, so its contents can leave it; returns warnings."""
+    if holder in unlocked:
+        return []
+    unlocked.add(holder)
+    try:
+        # The import lands as one rigid group; its bodies cannot leave it until unlocked.
+        ctx.engine.execute("component.unlock", {"component": holder})
+    except CommandRefused as exc:
+        # A refusal here is not a reason to leave the bodies in the import's own holder, and it used
+        # to be: the move was skipped outright. Measured on a real design with no feature history at
+        # all (every body imported, one unnamed component), the engine refuses with `nothing holds
+        # this component's contents together` — there was no lock to undo.
+        #
+        # So the move is tried anyway and the engine decides. A component that really is locked
+        # refuses the move too, and that refusal is the one worth reporting; this one is only a note.
+        return [f"the imported bodies were not unlocked first: {exc.message}"]
+    return []
+
+
+def _import_holder(tree: list[dict]) -> dict | None:
+    """The component the fallback import made directly under the design's root, if there is one."""
+    root = next((c["id"] for c in tree if c.get("parent") is None), None)
+    return next((c for c in tree if c.get("name") == IMPORT_HOLDER and c.get("parent") == root), None)
+
+
+def _theirs(tree: list[dict], holder: dict | None) -> set[object]:
+    """The import's own components: its holder and every component placed under it."""
+    if holder is None:
+        return set()
+    part_of = {occ["id"]: c["id"] for c in tree for occ in c.get("occurrences") or []}
+    by_id = {c["id"]: c for c in tree}
+    found, pending = set(), [holder["id"]]
+    while pending:
+        cid = pending.pop()
+        if cid not in found:
+            found.add(cid)
+            pending += [part_of[o] for o in by_id[cid].get("children") or [] if o in part_of]
+    return found
+
+
+def _promote(
+    ctx: Context, tree: list[dict], holder: dict, theirs: set[object], unlocked: set[object]
+) -> list[str]:
+    """Hand each top-level part of the import to the design where ours holds nothing; returns warnings.
+
+    The import already rebuilds Fusion's tree for what it brings: one definition per part, one
+    occurrence per placement, Fusion's names. The replay builds one component of ours per Fusion
+    occurrence, and where no feature was rebuilt into it, ours is empty scaffolding beside the
+    import's real one — measured on a third-party board, 98 of its 130 components. So where every
+    component of ours by that name (and everything under it) holds no body, feature, sketch or
+    construction geometry, ours go and the import's occurrence moves under the design's root in
+    their place: `occurrence.reparent` keeps its world position, and it arrives with every copy it
+    places.
+
+    Where ours holds native work, the import's part is left for `_move_imported_bodies`, which is the
+    path every body took before. A part with no component of ours by that name is promoted too:
+    there is nothing of ours for it to join.
+    """
+    by_id = {c["id"]: c for c in tree}
+    part_of = {occ["id"]: c for c in tree for occ in c.get("occurrences") or []}
+    root = holder["parent"]
+    ours: dict[str, list[object]] = {}
+    for component in tree:
+        if component.get("parent") == root and component["id"] not in theirs:
+            ours.setdefault(str(component.get("name")), []).append(component["id"])
+
+    def native(cid: object) -> bool:
+        component = by_id[cid]
+        own = any(component.get(key) for key in ("bodies", "features", "sketches", "construction"))
+        return own or any(native(part_of[o]["id"]) for o in component.get("children") or [])
+
+    warnings: list[str] = []
+    gone: set[object] = set()
+    for occurrence in holder.get("children") or []:
+        name = str(part_of[occurrence].get("name"))
+        mine = ours.get(name, [])
+        if any(native(cid) for cid in mine):
+            continue
+        try:
+            for cid in mine:
+                if cid not in gone:
+                    ctx.engine.execute("component.delete", {"component": cid})
+                    gone.add(cid)
+        except CommandRefused as exc:
+            warnings.append(f"component {name} kept as built: {exc.message}")
+            continue
+        warnings += _unlock(ctx, holder["id"], unlocked)
+        try:
+            ctx.engine.execute("occurrence.reparent", {"occurrence": occurrence, "parent": root})
+        except CommandRefused as exc:
+            warnings.append(f"{name} stays in the import: {exc.message}")
+    ctx.component_ids = {key: value for key, value in ctx.component_ids.items() if value not in gone}
+    return warnings
+
+
+def _drop_empty(ctx: Context, theirs: set[object]) -> None:
+    """Delete the components of ours left with nothing in them, until none is left.
+
+    Ours is every component but the root and the import's: `ctx.component_ids` keeps one component
+    per Fusion component and the replay makes one per placement, so it does not list them all. A
+    component the engine will not delete stays, and is not a failure.
+
+    A component that is empty **in Fusion too** stays: the designer left it there, and the tree
+    should read like Fusion's (Cristián's decision, 2026-11-18). Only scaffolding goes, the
+    components whose content the import holds or `_promote` took over. Empty in Fusion means a named
+    component with no bodies, no sketches and no occurrence placed inside it. No corpus design has
+    one, so this branch is guarded by reading, not by a corpus test.
+    """
+    placed_in = {o.parent for o in ctx.design.occurrences if o.parent is not None}
+    holders = {o.component for o in ctx.design.occurrences if o.id in placed_in}
+    empty_in_fusion = {
+        c.name
+        for c in ctx.design.components.values()
+        if c.name and not c.bodies and not c.sketches and c.id not in holders
+    }
+    tried: set[object] = set(theirs)
+    gone: set[object] = set()
+    while True:
+        tree = ctx.engine.execute("component.list", {"compact": True, "bodies": True})["components"]
+        empty = [
+            c["id"]
+            for c in tree
+            if c.get("parent") is not None
+            and c["id"] not in tried
+            and c.get("name") not in empty_in_fusion
+            and not any(c.get(key) for key in ("bodies", "children", "features", "sketches", "construction"))
+        ]
+        if not empty:
+            break
+        for cid in empty:
+            tried.add(cid)
+            try:
+                ctx.engine.execute("component.delete", {"component": cid})
+            except CommandRefused:
+                continue
+            gone.add(cid)
+    ctx.component_ids = {key: value for key, value in ctx.component_ids.items() if value not in gone}
+
+
 def reconcile_components(ctx: Context, imported_bodies: list[str]) -> list[str]:
-    """Move the imported bodies into the components Fusion owns them in; returns warnings.
+    """Give the imported bodies Fusion's component tree; returns warnings.
 
     `cadmpeg convert` writes the assembly structure into the STEP and SolidCraft's importer
-    rebuilds it, so the imported bodies arrive inside components carrying Fusion's own names —
-    measured on the three corpus files, with the nesting intact and one body per Fusion body. That
-    is the attribution the import itself provides: the bodies we could not rebuild still know which
-    component they belong to, so they join the tree the replay authored its sketches into instead
-    of standing beside it.
+    rebuilds it, so the imported bodies arrive inside components carrying Fusion's own names,
+    nesting and placements. Three steps, in this order (spec 0.4, item 2):
 
-    What stays behind is the import's own holder, emptied: SolidCraft records the transfer and
-    refuses to delete a component bodies were moved out of, and the holder carries the import's
-    base feature in the timeline either way.
+    1. `_promote`: a top-level part of the import whose components of ours hold no native work
+       replaces them, every placement included.
+    2. `_move_imported_bodies`: what is left in the import joins the components of ours that do
+       hold native work, as before 0.4.
+    3. `_drop_empty`: the components of ours that ended up with nothing in them go.
 
-    **A design that declares no components at all is still reconciled.** It used to return here,
-    which left every body of such a design sitting in `Fusion fallback` — a name of this
-    converter's own, in the file the user opens. The file attributing no body to a named component
-    is exactly the case the loop below already answers with the design root, so there was nothing
-    to leave early for. Measured on `corpus-11` and `corpus-10`, the two
-    corpus designs with no component tree and every body imported.
+    The import's holder itself stays, under the name `IMPORT_HOLDER`: the engine does not delete it
+    and its Import feature is in the timeline either way.
+    """
+    if not imported_bodies:
+        return []
+    tree = ctx.engine.execute("component.list", {"compact": True, "bodies": True})["components"]
+    holder = _import_holder(tree)
+    theirs = _theirs(tree, holder)
+    unlocked: set[object] = set()
+    warnings = _promote(ctx, tree, holder, theirs, unlocked) if holder is not None else []
+    warnings += _move_imported_bodies(ctx, set(imported_bodies), unlocked)
+    _drop_empty(ctx, theirs)
+    return warnings
+
+
+def _move_imported_bodies(ctx: Context, imported: set[str], unlocked: set[object]) -> list[str]:
+    """Move the imported bodies still in the import into the components Fusion owns them in.
+
+    **A design that declares no components at all is still reconciled.** Its bodies used to be left
+    in the import's holder — a name of this converter's own, in the file the user opens. The file
+    attributing no body to a named component is the case the loop below answers with the design
+    root. Measured on `corpus-11` and `corpus-10`, the two corpus designs
+    with no component tree and every body imported.
 
     **A part placed more than once stays in the import's structure.** The import places a
     definition as many times as the original does, and the replay builds one component per Fusion
     occurrence, so there is no one component its bodies could go to: moving them into any single
     one of ours left one placement where the original has N. Measured on a third-party board of 302
-    placements of 43 definitions — one header placed 100 times, one socket 75 — the saved file held
-    43 bodies. So a component the import places more than once, counting the placements of every
-    component above it up to the import's holder, keeps its bodies: the import already carries
-    Fusion's component names and every placement, and one aggregated warning says how many parts
-    stayed. Everything placed once is reconciled as before, which keeps the `.f3z` case and the
-    designs without components above exactly as they were — at the holder's own level nothing is
-    placed more than once.
+    placements of 43 definitions, the saved file held 43 bodies. So a component the import places
+    more than once, counting the placements of every component above it up to the import's holder,
+    keeps its bodies, and one aggregated warning says how many parts stayed.
+
+    Only bodies still inside the import's holder are moved: a part `_promote` already handed to the
+    design is in its place.
     """
-    if not imported_bodies:
-        return []
     warnings: list[str] = []
     tree = ctx.engine.execute("component.list", {"compact": True, "bodies": True})["components"]
     by_id = {c["id"]: c for c in tree}
+    import_holder = _import_holder(tree)
     ours = _our_paths(ctx)
-    imported = set(imported_bodies)
     attributed = any(c.bodies for c in ctx.design.components.values() if c.name)
-    unlocked: set[object] = set()
     repeated: list[tuple[int, int]] = []  # (bodies, placements) of each part left in the import
     placed: dict[object, int] = {}
     for component in tree:
         held = [b for b in component.get("bodies") or [] if b in imported]
         if not held:
             continue
-        times = _placements(component["id"], by_id, placed)
-        if times > 1:
-            repeated.append((len(held), times))
-            continue
         names, walk, holder = [], component, component
         while walk is not None and walk.get("parent") is not None:
             holder = walk
             names.append(str(walk.get("name")))
             walk = by_id.get(walk["parent"])
+        if import_holder is None or holder["id"] != import_holder["id"]:
+            continue  # promoted, or never in the import: already where the design has it
+        times = _placements(component["id"], by_id, placed)
+        if times > 1:
+            repeated.append((len(held), times))
+            continue
         path = tuple(reversed(names[:-1]))  # the holder's own name is the import's, not Fusion's
         if not path:
             # Bodies at the holder's own level carry no component. They are the design root's when
@@ -511,23 +668,7 @@ def reconcile_components(ctx: Context, imported_bodies: list[str]) -> list[str]:
                 "design; they stay where the import put them"
             )
             continue
-        if holder["id"] not in unlocked:
-            unlocked.add(holder["id"])
-            try:
-                # The import lands as one rigid group; its bodies cannot leave it until unlocked.
-                ctx.engine.execute("component.unlock", {"component": holder["id"]})
-            except CommandRefused as exc:
-                # A refusal here is not a reason to leave the bodies in the import's own holder, and
-                # it used to be: the move was skipped outright. Measured on a real design with no
-                # feature history at all (every body imported, one unnamed component), the engine
-                # refuses with `nothing holds this component's contents together` — there was no
-                # lock to undo — and the bodies stayed in `Fusion fallback`, a name of this
-                # converter's own, in the file the user opens.
-                #
-                # So the move is tried anyway and `component.move_bodies` decides. A component that
-                # really is locked refuses the move too, and that refusal is the one worth
-                # reporting; this one is only a note.
-                warnings.append(f"the imported bodies were not unlocked first: {exc.message}")
+        warnings += _unlock(ctx, holder["id"], unlocked)
         try:
             ctx.engine.execute("component.move_bodies", {"bodies": held, "component": target})
         except CommandRefused as exc:

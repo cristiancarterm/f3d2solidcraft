@@ -48,6 +48,8 @@ def build_report(
         "counts": {s: counts.get(s, 0) for s in ("exact", "inferred", "fallback", "failed", "skipped")},
         "features": [dataclasses.asdict(r) for r in result.features],
         "bodies": {"native": len(converted) - imported, "imported": imported},
+        # The features no parameter record of the file could be paired with: they carry none.
+        "unpaired_features": len(design.unpaired),
         # The sketches no feature names, built after the timeline; they have no feature row to go in.
         "sketches": [dataclasses.asdict(s) for s in result.sketches],
         "components": _component_tree(design),

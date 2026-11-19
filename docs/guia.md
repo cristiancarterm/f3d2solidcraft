@@ -137,7 +137,8 @@ Cómo leer el resumen:
 - `inferred`: también reconstruida, pero con una elección que el archivo no registra (qué perfiles usó una
   extrusión, qué aristas redondeó un empalme), medida contra el sólido original. Sus avisos indican qué se eligió y
   con qué claridad.
-- `fallback`: no se reconstruyó; su cuerpo llega como cuerpo importado.
+- `fallback`: no se reconstruyó; su cuerpo llega como cuerpo importado, salvo que el cuerpo reconstruido ya
+  coincida con el original; en ese caso se conserva nativo.
 - `failed`: no se reconstruyó y no tenía un cuerpo que importar (por ejemplo, un plano de construcción).
 - `skipped`: estaba suprimida en Fusion.
 - `bodies: N native, M imported`: de dónde vienen los cuerpos finales.

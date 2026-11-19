@@ -72,6 +72,9 @@ class Context:
     # The geometry is there for whoever opens the design; what must not happen is a feature
     # building a body out of a profile that is missing a piece (spec section 87).
     partial_sketches: set[str] = field(default_factory=set)
+    # Fusion parameter -> (the value the engine computed for it, its unit), as `parameters.add`
+    # answered. What a mapper checks before it lets a feature follow a parameter (`params.follows`).
+    param_values: dict[str, tuple[float, str]] = field(default_factory=dict)
 
 
 Mapper = Callable[[Feature, Context], list[str] | tuple[str, list[str]]]

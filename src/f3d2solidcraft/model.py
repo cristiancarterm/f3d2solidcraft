@@ -421,6 +421,11 @@ class Feature:
     shell: Shell | None = None
     primitive: dict | None = None
     parameters: tuple[str, ...] = ()
+    # The object id of the timeline item that places this feature, read off the end of its cadmpeg
+    # id (`…:Extrude3:1234`). It is what pairs the feature with the record ezf3d reads its parameters
+    # from: that record is the object right before the item. None for a feature of a merged `.f3z`
+    # member, whose id is an `f3d:xref/…` and whose item lives in another member's stream.
+    item: int | None = None
 
 
 @dataclass(frozen=True)
@@ -432,6 +437,20 @@ class Body:
     # `corpus-03 (dont print)` and `corpus-03 (dont print)`. They used to be dropped here
     # and the converted file showed the import's own `cadmpeg_model` instead (spec section 84).
     name: str | None = None
+
+
+@dataclass(frozen=True)
+class Paint:
+    """A colour Fusion binds to a body, or to one face of it (spec 0.4, item 3).
+
+    `rgba` is the appearance's `base_color`, each channel 0..1. A face's own colour carries the face
+    id: `appearance.assign` picks a face by a point, and the file gives none for a face, so a face
+    colour is read and reported but not applied (see `paint.paint_native`).
+    """
+
+    body: str  # the Fusion body id
+    rgba: tuple[float, float, float, float]
+    face: str | None = None  # the Fusion face id, for a face's own colour
 
 
 @dataclass(frozen=True)
@@ -501,3 +520,7 @@ class Design:
     warnings: list[str] = field(default_factory=list)
     components: dict[str, Component] = field(default_factory=dict)
     occurrences: list[Occurrence] = field(default_factory=list)
+    # The features no parameter record could be paired with, by name: they carry no parameters.
+    unpaired: list[str] = field(default_factory=list)
+    # The colours the file binds to bodies and faces.
+    paints: list[Paint] = field(default_factory=list)

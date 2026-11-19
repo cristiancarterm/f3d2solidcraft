@@ -22,6 +22,7 @@ from f3d2solidcraft.fallback import apply_fallback, name_bodies, original_step
 from f3d2solidcraft.mappers import MAPPERS
 from f3d2solidcraft.mappers.components import reconcile_components
 from f3d2solidcraft.oracle import Oracle, OracleUnavailable, PlacementsUnmeasurable
+from f3d2solidcraft.paint import paint_native
 from f3d2solidcraft.reader import read_design
 from f3d2solidcraft.replay import replay
 from f3d2solidcraft.report import build_report, summary
@@ -87,11 +88,14 @@ def _in_engine(
             # The reference the oracle already read *is* the original, so the verification
             # takes its view of it from there instead of opening the STEP again at the end.
             original = _reference_reading(oracle)
-        fallback_warnings = step_warnings + oracle_warnings + apply_fallback(ctx, result, step)
+        fallback_warnings = step_warnings + oracle_warnings + apply_fallback(ctx, result, step, original)
         # Right after the import, so everything below reads the names the design gives its
         # bodies rather than the STEP export's: the rebuild check and the measurement the
         # verification reports, the component reconciliation and the visibility replay.
         fallback_warnings += name_bodies(ctx, result)
+        # The bodies that stayed native lost nothing to the import but their colour, which the
+        # import's STEP carries and the replay does not: put back the one Fusion binds to them.
+        fallback_warnings += paint_native(ctx, result)
         rebuild_parameter = driving_parameter(ctx, result)
         rebuild_error = check_rebuild(ctx, result)
         # The placements the measurement below stands for, counted off the component graph: one

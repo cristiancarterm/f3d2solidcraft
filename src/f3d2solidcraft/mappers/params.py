@@ -6,7 +6,7 @@ import re
 
 from f3d2solidcraft.engine import CommandRefused
 from f3d2solidcraft.mappers import Context
-from f3d2solidcraft.model import Parameter
+from f3d2solidcraft.model import Feature, Parameter
 
 _MODEL_NAME = re.compile(r"^d\d+$")
 _WORD = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
@@ -126,9 +126,34 @@ def add_parameters(ctx: Context) -> list[str]:
                 warnings.append(wrong)
             ctx.param_names[p.name] = names[p.name]
             ctx.param_expressions[p.name] = expression
+            if isinstance(created, dict) and isinstance(created.get("value"), int | float):
+                ctx.param_values[p.name] = (float(created["value"]), str(created.get("unit")))
             pending.remove(p)
             errors.pop(p.name, None)
             progressed = True
         if not progressed:
             break
     return warnings + [f"parameter {name} not created: {msg}" for name, msg in errors.items()]
+
+
+def follows(ctx: Context, feature: Feature, role: str, wanted: float, unit: str) -> str | None:
+    """An expression of this feature's own parameter that comes to `wanted`, or None to keep the number.
+
+    Taken only where the file is unambiguous: exactly one of the parameters the feature owns fills
+    `role`, it was created in the design, and the value the engine computed for it is `wanted` in
+    `unit` — or its opposite, which a reversed feature carries as a sign (`-fusion_d30`). Anything
+    else keeps the number the file resolved, so a feature never follows a parameter it does not own.
+    """
+    owned = [p for p in ctx.design.parameters if p.name in feature.parameters and p.role == role]
+    if len(owned) != 1:
+        return None
+    name = ctx.param_names.get(owned[0].name)
+    computed = ctx.param_values.get(owned[0].name)
+    if name is None or computed is None or computed[1] != unit:
+        return None
+    tolerance = max(_AGREEMENT, 1e-9 * abs(wanted))
+    if abs(computed[0] - wanted) <= tolerance:
+        return name
+    if abs(computed[0] + wanted) <= tolerance:
+        return f"-{name}"
+    return None

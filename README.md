@@ -126,7 +126,8 @@ design.f3d
 - `exact`: rebuilt from what the file says.
 - `inferred`: rebuilt too, but with a choice the file does not record (which profiles an extrude used, which edges a
   fillet rounded), measured against the original solid. Its warnings say what was chosen and how clearly.
-- `fallback`: not rebuilt; its body comes in as an imported body.
+- `fallback`: not rebuilt; its body comes in as an imported body, unless the rebuilt body already matches the
+  original, in which case it is kept native.
 - `failed`: not rebuilt, with no body to fall back to (a construction plane, for example).
 - `skipped`: suppressed in Fusion.
 - `bodies: N native, M imported`: where the final bodies come from.

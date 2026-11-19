@@ -21,6 +21,7 @@ from f3d2solidcraft.model import (
     Loft,
     LoftSection,
     Occurrence,
+    Paint,
     Pattern,
     ProfileEdge,
     Revolve,
@@ -44,6 +45,7 @@ class CadirParts:
     # Records of the features array that are not timeline features, counted so the conversion can
     # say so instead of the reader deciding in silence (spec section 91).
     not_features: tuple[str, ...] = ()
+    paints: tuple[Paint, ...] = ()
 
 
 def dump_cadir(cadmpeg: Path, f3d: Path, out: Path) -> Path:
@@ -571,6 +573,62 @@ def _base_feature_bodies(defn: dict) -> tuple[str, ...]:
     return _ids(_dict(bodies.get("value")).get("bodies"))
 
 
+def _rgba(value: object) -> tuple[float, float, float, float] | None:
+    """An appearance's `base_color` as four channels, or None when r, g or b is not a number.
+
+    A colour with a channel missing is not read at all rather than filled with a default: filling
+    it would paint the body a colour Fusion never gave it (white, for the old default of 1.0). Only
+    the alpha may be absent or null, and then the colour is opaque.
+    """
+    colour = _dict(value)
+    r, g, b, a = (_number(colour.get(c)) for c in ("r", "g", "b", "a"))
+    if r is None or g is None or b is None:
+        return None
+    return (r, g, b, 1.0 if a is None else a)
+
+
+def _paints(model: dict) -> tuple[Paint, ...]:
+    """The colour each body and face binding names, where its appearance has a `base_color`.
+
+    A face binding is resolved to its body through the face's shell and region, so a caller can tell
+    whose face it is without walking the B-rep again. A malformed appearance or binding is skipped
+    and the rest still come through: a colour is never worth stopping a conversion for.
+    """
+    colours = {}
+    for a in model.get("appearances") or []:
+        if not isinstance(a, dict) or not isinstance(a.get("id"), str):
+            continue
+        rgba = _rgba(a.get("base_color"))
+        if rgba is not None:
+            colours[a["id"]] = rgba
+    index = {
+        item["id"]: item
+        for key in ("regions", "shells", "faces")
+        for item in model.get(key) or []
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    paints = []
+    for binding in model.get("appearance_bindings") or []:
+        if not isinstance(binding, dict):
+            continue
+        appearance = binding.get("appearance")
+        rgba = colours.get(appearance) if isinstance(appearance, str) else None
+        target = _dict(binding.get("target"))
+        target_id = target.get("id")
+        if rgba is None or not isinstance(target_id, str):
+            continue
+        if target.get("kind") == "body":
+            paints.append(Paint(body=target_id, rgba=rgba))
+        elif target.get("kind") == "face" and target_id in index:
+            shell_id = index[target_id].get("shell")
+            shell = _dict(index.get(shell_id)) if isinstance(shell_id, str) else {}
+            region_id = shell.get("region")
+            body = _dict(index.get(region_id)).get("body") if isinstance(region_id, str) else None
+            if isinstance(body, str) and body:
+                paints.append(Paint(body=body, rgba=rgba, face=target_id))
+    return tuple(paints)
+
+
 def _components(model: dict) -> dict[str, Component]:
     """Fusion's components, from the product definitions. A nameless one is the design's root."""
     out = {}
@@ -658,6 +716,17 @@ def _occurrences(model: dict) -> list[Occurrence]:
 # pair an untyped sketch feature with its record, in `_derived_sketch_links`.
 _SKETCH_SLOT = re.compile(r"^(?P<stream>.*)@(?P<index>\d+)$")
 _FEATURE_SLOT = re.compile(r"^\d+:(?P<stream>.*?)\d+:.*:(?P<index>\d+)$")
+
+
+# A feature of the design's own timeline: `f3d:model:feature#52:<stream>:<label>:<item oid>`. A merged
+# `.f3z` member's features are `f3d:xref/…` instead, and their item oid is one of another stream.
+_OWN_FEATURE = re.compile(r"^f3d:model:feature#.*:(?P<item>\d+)$")
+
+
+def _item_of(ident: object) -> int | None:
+    """The oid of the timeline item a feature's id ends in, for a feature of the design's own stream."""
+    m = _OWN_FEATURE.match(ident) if isinstance(ident, str) else None
+    return int(m["item"]) if m else None
 
 
 def _slot(ident: str, pattern: re.Pattern[str]) -> tuple[str, int] | None:
@@ -824,9 +893,12 @@ def parse_cadir(data: dict) -> CadirParts:
                 edge_op=_edge_op(defn, edge_points),
                 shell=_shell(defn, face_boundaries) if kind == "shell" else None,
                 primitive=_dict(defn.get("solid")) if kind == "primitive" else None,
+                item=_item_of(f.get("id")),
             )
         )
     bodies = [
         Body(b["id"], bool(b.get("visible", True)), b.get("name") or None) for b in model.get("bodies", [])
     ]
-    return CadirParts(sketches, features, bodies, _components(model), _occurrences(model), not_features)
+    return CadirParts(
+        sketches, features, bodies, _components(model), _occurrences(model), not_features, _paints(model)
+    )

@@ -7,6 +7,7 @@ import math
 from f3d2solidcraft.geometry import _cross
 from f3d2solidcraft.mappers import JOIN_TOUCHING, Context, Unsupported, definition, register
 from f3d2solidcraft.mappers.outputs import name_outputs, no_target
+from f3d2solidcraft.mappers.params import follows
 from f3d2solidcraft.model import Feature, Frame, Vec3
 
 _OPERATIONS = {"new_body": "new", "join": "join", "cut": "cut", "intersect": "intersect"}
@@ -121,7 +122,8 @@ def map_revolve(feature: Feature, ctx: Context) -> list[str]:
         # every other profile kind spends measurements on does not arise here. `exact`.
         "profiles": "all",
         "axis": axis,
-        "angle": f"{math.degrees(rev.angle_rad) * sign:.10g} deg",
+        "angle": follows(ctx, feature, "AlongAngle", math.degrees(rev.angle_rad) * sign, "deg")
+        or f"{math.degrees(rev.angle_rad) * sign:.10g} deg",
         "operation": operation,
         "name": feature.name,
         "touching": JOIN_TOUCHING,
