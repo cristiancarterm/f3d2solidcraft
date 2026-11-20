@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from f3d2solidcraft.model import (
@@ -20,6 +20,7 @@ from f3d2solidcraft.model import (
     Frame,
     Loft,
     LoftSection,
+    ModelParameter,
     Occurrence,
     Paint,
     Pattern,
@@ -28,6 +29,7 @@ from f3d2solidcraft.model import (
     Shell,
     Sketch,
     SketchConstraint,
+    SketchDimension,
     SketchEntity,
     TrimmedSegment,
 )
@@ -46,6 +48,10 @@ class CadirParts:
     # say so instead of the reader deciding in silence (spec section 91).
     not_features: tuple[str, ...] = ()
     paints: tuple[Paint, ...] = ()
+    # cadmpeg's `model.parameters` by id, and for each sketch the names of the parameters whose owner
+    # is the feature that holds it (spec 0.4.2, sketch dimensions).
+    parameters: dict[str, ModelParameter] = field(default_factory=dict)
+    owned: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def dump_cadir(cadmpeg: Path, f3d: Path, out: Path) -> Path:
@@ -782,6 +788,45 @@ def _derived_sketch_links(
     return {fid: sid for fid, sid in picks.items() if len(takers[sid]) == 1}
 
 
+def _model_parameters(model: dict) -> dict[str, ModelParameter]:
+    """cadmpeg's `model.parameters` by id; an entry without a text id and name is skipped."""
+    raw = model.get("parameters")
+    out: dict[str, ModelParameter] = {}
+    for p in raw if isinstance(raw, list) else []:
+        if not isinstance(p, dict) or not isinstance(p.get("id"), str) or not isinstance(p.get("name"), str):
+            continue
+        value = _dict(p.get("value"))
+        kind = value.get("kind")
+        out[p["id"]] = ModelParameter(
+            id=p["id"],
+            name=p["name"],
+            owner=p["owner"] if isinstance(p.get("owner"), str) else None,
+            expression=p["expression"] if isinstance(p.get("expression"), str) else "",
+            kind=kind if isinstance(kind, str) else "",
+            value=_number(value.get("value")),
+        )
+    return out
+
+
+def _dimension_parameter(defn: dict) -> tuple[str, bool] | None:
+    """The parameter id a sketch constraint names and whether it is negated, or None when it names none.
+
+    Two shapes are in the corpus: the id as text (172 records) and `{id, negated}` (the 11 offsets).
+    """
+    parameter = defn.get("parameter")
+    if isinstance(parameter, dict):
+        ident = parameter.get("id")
+        return (ident, parameter.get("negated") is True) if isinstance(ident, str) else ("", False)
+    if parameter is None:
+        return None
+    return (parameter, False) if isinstance(parameter, str) else ("", False)
+
+
+def _foreign(ident: str) -> bool:
+    """Whether a parameter id is a referenced document's: cadmpeg prefixes a merged member's ids so."""
+    return ident.startswith("f3d:xref/")
+
+
 def parse_cadir(data: dict) -> CadirParts:
     model = data["model"]
     entities: dict[str, list[SketchEntity]] = {}
@@ -790,10 +835,22 @@ def parse_cadir(data: dict) -> CadirParts:
         entities.setdefault(e["sketch"], []).append(
             SketchEntity(e["id"], geometry.get("kind", "unknown"), bool(e.get("construction")), geometry)
         )
+    parameters = _model_parameters(model)
     constraints: dict[str, list[SketchConstraint]] = {}
+    dimensions: dict[str, list[SketchDimension]] = {}
     for c in model.get("sketch_constraints", []):
-        defn = c.get("definition", {})
-        constraints.setdefault(c["sketch"], []).append(SketchConstraint(defn.get("kind", "unknown"), defn))
+        defn = _dict(c.get("definition"))
+        kind = defn.get("kind") if isinstance(defn.get("kind"), str) else "unknown"
+        # A record that names a parameter is a dimension, not a constraint: it has a value to drive.
+        named = _dimension_parameter(defn)
+        if named is not None:
+            ident, negated = named
+            found = parameters.get(ident)
+            dimensions.setdefault(c["sketch"], []).append(
+                SketchDimension(kind, found.name if found else "", defn, negated, _foreign(ident))
+            )
+            continue
+        constraints.setdefault(c["sketch"], []).append(SketchConstraint(kind, defn))
     sketches = {
         s["id"]: Sketch(
             id=s["id"],
@@ -804,6 +861,7 @@ def parse_cadir(data: dict) -> CadirParts:
                 for loop in s.get("profiles", [])
             ),
             constraints=tuple(constraints.get(s["id"], [])),
+            typed_dimensions=tuple(dimensions.get(s["id"], [])),
             visible=s.get("visible") is not False,
         )
         for s in model.get("sketches", [])
@@ -899,6 +957,26 @@ def parse_cadir(data: dict) -> CadirParts:
     bodies = [
         Body(b["id"], bool(b.get("visible", True)), b.get("name") or None) for b in model.get("bodies", [])
     ]
+    # Which sketch each feature holds, read or derived the same way `Feature.sketch` is, so a
+    # parameter's owner names a sketch.
+    holds = {
+        str(f.get("id")): sketch
+        for f, feature in zip((f for f in raw_features if "name" in f), features)
+        if (sketch := feature.sketch) is not None
+    }
+    owned: dict[str, list[str]] = {}
+    for p in parameters.values():
+        sketch = holds.get(p.owner or "")
+        if sketch is not None and not _foreign(p.id):
+            owned.setdefault(sketch, []).append(p.name)
     return CadirParts(
-        sketches, features, bodies, _components(model), _occurrences(model), not_features, _paints(model)
+        sketches,
+        features,
+        bodies,
+        _components(model),
+        _occurrences(model),
+        not_features,
+        _paints(model),
+        parameters,
+        {sketch: tuple(names) for sketch, names in owned.items()},
     )

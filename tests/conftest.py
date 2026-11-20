@@ -93,6 +93,31 @@ def short_name():
     return spell
 
 
+@pytest.fixture
+def unc():
+    r"""The UNC spelling of a local path, through the machine's own admin share: `\\localhost\C$\...`.
+
+    A network folder (a NAS, a server share) is spelt that way, and a Windows machine reaches its own
+    drives through the same SMB client as a remote one, so this is a share without a second machine.
+    Skips off Windows. On Windows a share that is not there fails under `F3D2SC_REQUIRE_INTEGRATION`
+    (CI: the GitHub runner has `C$`) and skips elsewhere, where admin shares may be turned off.
+    """
+    if os.name != "nt":
+        pytest.skip("UNC paths exist only on Windows")
+
+    def spell(path: Path) -> Path:
+        local = Path(os.path.realpath(path))
+        drive = local.drive
+        if len(drive) != 2 or drive[1] != ":":
+            raise ValueError(f"not on a drive letter: {local}")
+        share = Path(f"\\\\localhost\\{drive[0]}$\\")
+        if not share.is_dir():
+            _unavailable(f"the admin share {share} is not reachable on this machine")
+        return share / local.relative_to(local.anchor)
+
+    return spell
+
+
 @pytest.fixture(scope="session")
 def sample_f3d() -> Path:
     if not SAMPLE.is_file():

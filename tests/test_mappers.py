@@ -72,10 +72,11 @@ def test_first_sketch_is_rebuilt_with_its_profiles(ctx):
     drawn = [e for e in sketch.entities if e.kind != "point"]
     assert len(ctx.curve_ids) == len(drawn)
     assert ctx.sketch_names[first.sketch]
-    # d1 and d2 are the diameters of the two 50 mm circles: both must be applied, without a warning.
-    assert [w for w in warnings if (" d1 " in w or " d2 " in w) and not w.startswith("ambiguous")] == []
-    # Twins of the same size: d1 (two circles), d3 and d4 (four lines each); d2 then has a single candidate.
-    assert sorted(w.split()[2] for w in warnings if w.startswith("ambiguous")) == ["d1", "d3", "d4"]
+    # d1 and d2 are the diameters of the two 50 mm circles, d3 and d4 a horizontal and a vertical
+    # distance. Matched by value they were ambiguous (two circles, four lines each); since 0.4.2 cadmpeg's
+    # typed records name what each one measures, so all four apply and nothing is left to warn about.
+    assert [w for w in warnings if "dimension" in w] == []
+    assert ctx.dimensions[first.sketch]["tally"].applied == 4
     assert [w for w in warnings if "profiles" in w] == []
 
 

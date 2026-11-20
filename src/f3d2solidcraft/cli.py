@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,7 +56,7 @@ def _in_engine(
     design: object,
     step: Path,
     out: Path,
-    out_partial: Path,
+    saved: Path,
     tmp: Path,
     tools: Tools,
     strict: bool,
@@ -68,8 +69,12 @@ def _in_engine(
     `strict` asks for the reading that enumerates placements where the design has repeats. It is
     tried first and raises `_PlacementsUnmeasurable` when this engine cannot answer it, which is the
     caller's cue to redo the run per definition.
+
+    The engine saves the design to `saved`, in the run's temp dir, never beside `out`: SolidCraft
+    refuses to save to a network path (`\\\\server\\share\\...`) whatever it is allowed, so the
+    converter copies the file to the user's folder itself (`convert`).
     """
-    with Engine(tools.solidcraft_cli, [tmp, out.parent]) as eng:
+    with Engine(tools.solidcraft_cli, [tmp]) as eng:
         eng.unmeasurable = set(unmeasurable)
         eng.call("new_design", {"name": out.stem})
         # Without the original to ask, the conversion still runs: every feature that
@@ -118,7 +123,7 @@ def _in_engine(
         # So the placements are counted again right before the save, from the same free listing,
         # and anything lost is the verification's to report rather than the file's to hide.
         placements_lost = dict(measured_placements - eng.placements_by_body())
-        eng.call("save", {"path": str(out_partial)})
+        eng.call("save", {"path": str(saved)})
         if original is None:
             # No oracle, or it stopped answering: read the original the long way. Opening
             # the STEP replaces the design in the session, so it happens after the save.
@@ -186,7 +191,13 @@ def convert(
             step, step_warnings = original_step(tools.cadmpeg, cadir, tmp / "original.step")
             cadir.unlink()
             (tmp / "design.cadir.fidelity.json").unlink(missing_ok=True)  # cadmpeg dump writes it alongside
-            out_partial.unlink(missing_ok=True)  # a stale one would make the engine leave a .bak
+            # Where the engine saves: in the temp dir, which is a local folder it accepts, and in a
+            # folder of its own, named as the output so the design keeps the output's name. Measured
+            # on Windows 0.4.1: SolidCraft refuses every save to a UNC path ("not allowed for this
+            # agent: network (UNC), device and NT namespace paths"), allowed or not, so a design
+            # bound for a NAS share could never be written there by the engine.
+            saved = tmp / "saved" / out.name
+            saved.parent.mkdir()
             # Two things can only be learnt by trying, and each one costs the engine: whether the
             # design's placements can be measured at all, and whether some one body cannot. A
             # call that times out leaves the session out of step, so the engine is gone either way
@@ -212,7 +223,7 @@ def convert(
                         design,
                         step,
                         out,
-                        out_partial,
+                        saved,
                         tmp,
                         tools,
                         strict,
@@ -238,6 +249,8 @@ def convert(
                     f"gave up after {_RETRIES} attempts; the last reason was: {mode_warnings[-1]}"
                 )
             fallback_warnings += mode_warnings
+            # Copied, not moved: the temp dir and the output can be different volumes (a share).
+            shutil.copyfile(saved, out_partial)
             verification = (
                 compare(original, converted)
                 if original is not None
@@ -263,9 +276,12 @@ def convert(
         if report_partial and report_path:
             os.replace(report_partial, report_path)
     finally:
-        out_partial.unlink(missing_ok=True)
+        # A cleanup that fails must not hide the error that brought us here.
+        with contextlib.suppress(OSError):
+            out_partial.unlink(missing_ok=True)
         if report_partial:
-            report_partial.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                report_partial.unlink(missing_ok=True)
     return report
 
 

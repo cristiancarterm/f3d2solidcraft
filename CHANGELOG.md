@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.2
+
+- Windows: saving to a network folder (`\\server\share\...`) works.
+- Sketch dimensions: a Fusion dimension now arrives on the entities it measures, on the sketch that owns it,
+  including point-to-point horizontal and vertical distances, distances between parallel lines and dimensions
+  added after later features. It drives the sketch with its parameter only when the drawn sketch already
+  measures that parameter's value, so applying it does not move the sketch. Where the file does not say which
+  entities a dimension is on, it is placed by its value: on a single line or circle of that size it drives, as in
+  0.4.1, and the report warns when more than one fits; on a pair of points or lines, or on one of several
+  entities of the same size, it arrives as a reference without its parameter, counted as `ambiguous` in the
+  report. The others do not arrive yet, and the report says why for each one (for example offsets, or a value
+  nothing in the sketch measures).
+
 ## 0.4.1
 
 - Parameters: features and sketch dimensions now show the names you gave your parameters instead of Fusion's

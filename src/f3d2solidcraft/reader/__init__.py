@@ -7,8 +7,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from f3d2solidcraft.model import Design
-from f3d2solidcraft.reader.cadir import dump_cadir, parse_cadir
+from f3d2solidcraft.model import Design, Parameter
+from f3d2solidcraft.reader.cadir import CadirParts, _foreign, dump_cadir, parse_cadir
 from f3d2solidcraft.reader.fusion import read_fusion
 from f3d2solidcraft.reader.locale import LABELS, normalize_labels
 
@@ -30,6 +30,36 @@ def _same_label(record: str, tag: str) -> bool:
     without one. Measured over the 13 `.f3d` of the corpus and the sample: equal in every pairing.
     """
     return record.replace(" ", "") == tag.replace(" ", "")
+
+
+def _sketch_dimensions(
+    cad: CadirParts, parameters: list[Parameter], positional: dict[str, tuple[Parameter, ...]]
+) -> dict[str, tuple[Parameter, ...]]:
+    """The parameters each sketch owns: by cadmpeg's owner, and by ezf3d's position where only it sees one.
+
+    ezf3d gives a parameter to the nearest feature record before it, which is right for most and
+    wrong for a dimension added after later features: that one lands on an Extrude, a Mirror or
+    another sketch. Measured over the corpus's 13 `.f3d`, 43 of 157 sketch dimensions did, and
+    cadmpeg's `model.parameters[].owner` names the right sketch feature for all 43 — so where the file
+    lists a parameter, its owner places it.
+
+    A parameter cadmpeg does not list at all stays where ezf3d puts it, because ezf3d is then the
+    only reader that sees it: `corpus-04`'s `d5` and `d6` (`10.00 mm`) and `corpus-03`'s `asdf`,
+    `docklength`, `dockphoneheight`, `topoverage` and `d325` are such. Only the root's own list counts:
+    a merged `.f3z` member's parameters (`f3d:xref/…` ids) are another document's, and a name there
+    says nothing about the root's parameter of that name. A file whose dump has no `model.parameters` keeps the positional rule
+    whole, as before.
+    """
+    if not cad.parameters:
+        return dict(positional)
+    listed = {p.name for p in cad.parameters.values() if not _foreign(p.id)}
+    by_name = {p.name: p for p in parameters}
+    out: dict[str, tuple[Parameter, ...]] = {}
+    for sid in cad.sketches:
+        owned = [by_name[name] for name in cad.owned.get(sid, ()) if name in by_name]
+        unlisted = [p for p in positional.get(sid, ()) if p.name not in listed]
+        out[sid] = tuple(owned + unlisted)
+    return out
 
 
 def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
@@ -56,6 +86,7 @@ def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
     claims = Counter(f.item for f in cad.features if f.item is not None)
     features = []
     sketches = dict(cad.sketches)
+    positional: dict[str, tuple[Parameter, ...]] = {}
     unpaired: list[str] = []
     for f in cad.features:
         record = fusion.by_item.get(f.item) if f.item is not None and claims[f.item] == 1 else None
@@ -68,7 +99,7 @@ def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
             along = next((p.name for p in owned if p.role == "AlongDistance"), None)
             extrude = dataclasses.replace(extrude, distance_param=along)
         if paired and f.sketch in sketches:
-            sketches[f.sketch] = dataclasses.replace(sketches[f.sketch], dimensions=owned)
+            positional[f.sketch] = owned
         features.append(
             dataclasses.replace(
                 f,
@@ -77,6 +108,8 @@ def read_design(f3d: Path, cadmpeg: Path, workdir: Path) -> Design:
                 parameters=tuple(p.name for p in owned),
             )
         )
+    for sid, dimensions in _sketch_dimensions(cad, fusion.parameters, positional).items():
+        sketches[sid] = dataclasses.replace(sketches[sid], dimensions=dimensions)
     if unpaired:
         warnings.append(
             f"{len(unpaired)} of {len(cad.features)} feature(s) could not be paired with a parameter "

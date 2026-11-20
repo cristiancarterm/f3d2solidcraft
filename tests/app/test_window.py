@@ -728,6 +728,25 @@ def test_a_design_named_with_accents_converts_through_the_window(qtbot, tools, s
     assert not list(folder.glob("*.partial"))
 
 
+def test_the_window_saves_to_a_network_unc_folder(qtbot, tools, sample_f3d, tmp_path, unc):
+    # «Guardar como» to a network folder: Qt's dialog hands the path back with forward slashes,
+    # `//localhost/C$/...`, and the worker gets it as the window passes it on.
+    folder = tmp_path / "on the share"
+    folder.mkdir()
+    shared = unc(folder)
+    wizard = Wizard(lang="es", settings_path=tmp_path / "settings.json")
+    qtbot.addWidget(wizard)
+    wizard.load_file(sample_f3d)
+    qtbot.waitUntil(lambda: "26 operaciones" in wizard.holds_label.text(), timeout=120_000)
+    assert wizard.set_output(Path(str(shared / "box.solidcraft").replace("\\", "/")))
+    wizard.start_conversion()
+    qtbot.waitUntil(lambda: wizard.pages.currentIndex() == RESULT, timeout=300_000)
+    assert wizard.outcome.kind == "verified", wizard.outcome.message
+    assert (folder / "box.solidcraft").is_file()
+    assert json.loads((folder / "box.report.json").read_text(encoding="utf-8"))["verification"]["ok"] is True
+    assert not list(folder.glob("*.partial"))
+
+
 def test_an_existing_report_is_named_before_it_is_replaced(qtbot, tools, sample_f3d, tmp_path):
     from PySide6.QtWidgets import QMessageBox
 

@@ -81,6 +81,10 @@ class Context:
     # these `param_names` holds the name or the formula a feature is handed, not a parameter to
     # change (`params.driver` finds the one that is).
     param_inlined: set[str] = field(default_factory=set)
+    # What became of each built sketch's Fusion dimensions, by cadmpeg sketch id: the engine's name
+    # for the sketch and the counts the report sums (`sketch.DimensionTally`). Written once the
+    # sketch is finished, so a sketch that was rolled back leaves nothing here.
+    dimensions: dict[str, dict] = field(default_factory=dict)
 
 
 Mapper = Callable[[Feature, Context], list[str] | tuple[str, list[str]]]

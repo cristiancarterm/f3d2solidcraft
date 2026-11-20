@@ -16,7 +16,7 @@ from f3d2solidcraft.mappers.components import (
     create_components,
 )
 from f3d2solidcraft.mappers.params import add_parameters
-from f3d2solidcraft.mappers.sketch import build_sketch
+from f3d2solidcraft.mappers.sketch import build_sketch, dimension_report
 from f3d2solidcraft.model import Design, Feature
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -56,6 +56,8 @@ class ReplayResult:
     component_warnings: list[str] = field(default_factory=list)
     imported_bodies: list[str] = field(default_factory=list)  # SolidCraft names apply_fallback inserted
     sketches: list[SketchReport] = field(default_factory=list)  # the ones no feature names
+    # The sketches' Fusion dimensions: how many arrived and why the rest did not (`dimension_report`).
+    dimensions: dict = field(default_factory=dict)
 
 
 _MAPPED = frozenset({"exact", "inferred"})
@@ -265,7 +267,15 @@ def replay(
     # component the last feature was authored in.
     if ctx.component_ids:
         activate(ROOT, ctx)
-    return ReplayResult(reports, fallback, parameter_warnings, component_warnings, sketches=sketches), ctx
+    result = ReplayResult(
+        reports,
+        fallback,
+        parameter_warnings,
+        component_warnings,
+        sketches=sketches,
+        dimensions=dimension_report(ctx),
+    )
+    return result, ctx
 
 
 def _unnamed_sketches(ctx: Context) -> list[SketchReport]:
@@ -317,6 +327,10 @@ _NO_NAME = (
 )
 
 
-def _maps(ctx: Context) -> list[dict[str, str]]:
-    """The name maps a mapper may fill; replay snapshots and restores them on rollback."""
-    return [ctx.param_names, ctx.sketch_names, ctx.curve_ids, ctx.body_names]
+def _maps(ctx: Context) -> list[dict]:
+    """The maps a mapper may fill; replay snapshots and restores them on rollback.
+
+    `ctx.dimensions` among them: a sketch rolled back is not in the saved design, so its dimensions
+    must not be reported as arrived (`dimension_report` counts them as `sketch not built`).
+    """
+    return [ctx.param_names, ctx.sketch_names, ctx.curve_ids, ctx.body_names, ctx.dimensions]

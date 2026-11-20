@@ -141,6 +141,29 @@ def test_convert_takes_paths_spelt_in_8_3_short_names(sample_f3d, tools, tmp_pat
     assert json.loads((folder / "box.json").read_text(encoding="utf-8"))["verification"]["ok"] is True
 
 
+def test_convert_saves_to_a_network_unc_path(sample_f3d, tools, tmp_path, unc):
+    r"""A design saved to a network folder, spelt `\\server\share\...` as a NAS share is: a user's
+    report against 0.4.1. The output and the report both go there; the input stays local.
+    """
+    folder = tmp_path / "on the share"
+    folder.mkdir()
+    shared = unc(folder)
+    code = main(
+        [
+            "convert",
+            str(sample_f3d),
+            "-o",
+            str(shared / "box.solidcraft"),
+            "--report",
+            str(shared / "box.json"),
+        ]
+    )
+    assert code == 0
+    assert (folder / "box.solidcraft").is_file()
+    assert json.loads((folder / "box.json").read_text(encoding="utf-8"))["verification"]["ok"] is True
+    assert not list(folder.glob("*.partial"))
+
+
 def test_convert_summary_says_where_bodies_come_from(sample_f3d, tools, tmp_path, capsys):
     assert main(["convert", str(sample_f3d), "-o", str(tmp_path / "box.solidcraft")]) == 0
     text = capsys.readouterr().out

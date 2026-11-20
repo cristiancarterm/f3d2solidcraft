@@ -68,8 +68,9 @@ def saved(tools, tmp_path_factory):
 
 def test_the_saved_caja_carries_its_extrude_distances_and_sketch_dimensions_as_parameters(saved):
     """5 extrude distances follow a parameter (`d125` reads `LatchFrameThickness`, the name it
-    restates) and 8 sketch dimensions do; the counts and the verification are what they were before
-    the pairing."""
+    restates) and 23 sketch dimensions do (8 before 0.4.2, when a dimension was matched by value and
+    placed by ezf3d's position; the 24th, a `repeated_diameter` over two free circles, is a reference
+    since the review of 0.4.2, as the file does not say which circle it is on); the counts and the verification are what they were before the pairing."""
     code, report, linked = saved("Caja parametrica v2.f3d")
     assert code == 0 and report["verification"]["ok"] is True
     assert report["unpaired_features"] == 0
@@ -79,14 +80,15 @@ def test_the_saved_caja_carries_its_extrude_distances_and_sketch_dimensions_as_p
     ]
     assert len(extrudes) == 5
     assert ("Extrude 7", "LatchFrameThickness") in extrudes
-    assert len([x for x in linked if x[0] == "sketch"]) == 8
+    assert len([x for x in linked if x[0] == "sketch"]) == 23
 
 
 def test_the_saved_mango_carries_its_sketch_dimensions_as_parameters(saved):
     code, report, linked = saved("mango para lima.f3d")
     assert code == 0 and report["verification"]["ok"] is True
     assert report["counts"] == {"exact": 8, "inferred": 0, "fallback": 16, "failed": 0, "skipped": 0}
-    assert len([x for x in linked if x[0] == "sketch"]) == 16
+    # 16 before 0.4.2: the typed dimensions add the point-to-point distances and the angles.
+    assert len([x for x in linked if x[0] == "sketch"]) == 26
 
 
 def test_the_saved_caja_fillets_and_chamfers_follow_their_parameters(saved):
@@ -219,7 +221,10 @@ def test_the_saved_caja_shows_the_users_names_and_formulas(saved):
     assert ("Extrude 7", "LatchFrameThickness") in {(f, e) for _s, f, e in linked}
     assert "CaseExteriorWidth" in expressions  # a sketch dimension, d7
     assert "HingeDiameter / 2" in expressions  # a formula dimension, d34
-    assert not [e for e in expressions if re.search(r"\bfusion_d\d+\b|\bd\d+_\d+\b", e)], expressions
+    # `d35` is `45 deg`, a plain number, so it keeps a parameter of its own (see the test after this
+    # one); it shows here since 0.4.2, when an angular sketch dimension started to arrive.
+    plain = {"fusion_d35"}
+    assert not [e for e in expressions - plain if re.search(r"\bfusion_d\d+\b|\bd\d+_\d+\b", e)], expressions
 
 
 def test_the_saved_caja_keeps_plain_numbers_as_fusion_parameters(saved_table):

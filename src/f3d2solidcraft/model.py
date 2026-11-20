@@ -64,13 +64,62 @@ class SketchConstraint:
 
 
 @dataclass(frozen=True)
+class SketchDimension:
+    """A dimension Fusion recorded in a sketch, as cadmpeg types it: what it measures and its parameter.
+
+    `kind` is cadmpeg's (`horizontal_distance`, `vertical_distance`, `distance_loci`, `distance`,
+    `diameter`, `radius`, `angle`, `offset`, `repeated_length`, `repeated_diameter`, `native`) and
+    `definition` is the record whole, entities included, so the mapper reads them where they are.
+    `parameter` is the parameter's **name** (`d12`, `asdf`), the key every other part of the
+    converter uses; empty when the record names a parameter the file's list does not hold.
+
+    Measured over the corpus's 13 `.f3d`: 183 records for 157 distinct parameters. A parameter can
+    have more than one record — Fusion keeps an annotation and a pair for the same distance, and an
+    angle has a typed record beside an untyped `native` one — so the records are grouped by parameter
+    and applied once.
+    """
+
+    kind: str
+    parameter: str
+    definition: dict
+    negated: bool = False  # the record says the parameter is applied with its sign turned
+    # The parameter is a referenced document's (`f3d:xref/…`), not the root's. ezf3d reads the root's
+    # table only, and names repeat between documents: `corpus-08.f3z` has 16 names
+    # in both, and its member's `d1` is a 17.8 mm diameter where the root's `d1` is 55 mm. So such a
+    # dimension is never looked up by name.
+    foreign: bool = False
+
+
+@dataclass(frozen=True)
+class ModelParameter:
+    """One entry of cadmpeg's `model.parameters`: a parameter, and the feature that owns it.
+
+    `owner` is what places a sketch dimension on its sketch. ezf3d's positional rule gives a
+    parameter to the nearest feature record before it, and a dimension added after later features
+    lands on whichever record that is: measured, 43 of the corpus's 157 sketch dimensions sat on an
+    Extrude, a Mirror or another sketch, and `owner` named the right sketch feature for all 43.
+    """
+
+    id: str
+    name: str
+    owner: str | None
+    expression: str
+    kind: str  # length | angle | … as cadmpeg types the value; empty when it does not say
+    value: float | None  # cadmpeg's own number: millimetres for a length, radians for an angle
+
+
+@dataclass(frozen=True)
 class Sketch:
     id: str
     frame: Frame | None
     entities: tuple[SketchEntity, ...]
     profiles: tuple[tuple[ProfileEdge, ...], ...]
     constraints: tuple[SketchConstraint, ...]
+    # The parameters this sketch owns, as ezf3d reads them (role, unit, value): by cadmpeg's owner
+    # where the file lists the parameter, by ezf3d's positional rule where only ezf3d sees it.
     dimensions: tuple[Parameter, ...] = ()
+    # The dimensions cadmpeg types, with what each one measures (`SketchDimension`).
+    typed_dimensions: tuple[SketchDimension, ...] = ()
     # Fusion hides a sketch once it has been used, which is nearly always: measured, 86 of the
     # corpus's 88 sketches are hidden. `True` when the file says nothing.
     visible: bool = True

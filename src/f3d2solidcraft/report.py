@@ -53,6 +53,8 @@ def build_report(
         # The sketches no feature names, built after the timeline; they have no feature row to go in.
         "sketches": [dataclasses.asdict(s) for s in result.sketches],
         "components": _component_tree(design),
+        # The sketches' Fusion dimensions: how many arrived, and why each other one did not.
+        "dimensions": result.dimensions,
         "warnings": (
             design.warnings + result.parameter_warnings + result.component_warnings + fallback_warnings
         ),
@@ -96,6 +98,19 @@ def summary(report: dict) -> str:
             f"  sketches no feature names: {built} built, {len(loose) - built} not "
             "(the engine numbered them; the file gives them no label)"
         )
+    dims = report.get("dimensions") or {}
+    if dims.get("fusion"):
+        # `applied` counts only the dimensions placed by the entities they measure; a place guessed by
+        # value is `ambiguous`, a reference without its parameter.
+        line = f"  sketch dimensions: {dims['applied']} of {dims['fusion']} applied"
+        if dims["reference"]:
+            line += f", {dims['reference']} as reference"
+        if dims.get("ambiguous"):
+            line += f", {dims['ambiguous']} placed by value as reference (ambiguous)"
+        if dims["skipped"]:
+            reasons = "; ".join(f"{n} {why}" for why, n in dims["reasons"].items())
+            line += f", {dims['skipped']} skipped ({reasons})"
+        lines.append(line)
     named = [c for c in report.get("components", []) if c["name"]]
     if named:
         lines.append(f"  components: {len(named)} ({', '.join(c['name'] for c in named)})")
